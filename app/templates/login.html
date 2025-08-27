@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+
+{% block title %}Вход в систему{% endblock %}
+
+{% block content %}
+<style>
+    /* Особые стили только для страницы входа, чтобы форма была по центру */
+    .login-container {
+        min-height: 75vh;
+        display: flex;
+        align-items: center;
+    }
+</style>
+
+<div class="login-container">
+    <div class="row justify-content-center w-100">
+        <div class="col-md-6 col-lg-4">
+            <!-- Класс is-visible добавлен сразу, чтобы форма не "прыгала" при загрузке */ -->
+            <div class="card shadow-lg animate-on-scroll is-visible">
+                <div class="card-body p-4">
+                    <div class="text-center mb-4">
+                        <img src="/client-service/static/logo.svg"  alt="Golden House Logo" height="60">
+                    </div>
+                    <h1 class="card-title text-center h3 mb-4">Вход в CRM</h1>
+                    <form method="POST" action="{{ url_for('auth.login') }}">
+                        <div class="form-floating mb-3">
+                            <input type="text" class="form-control" id="username" name="username" placeholder="Логин" required>
+                            <label for="username">Логин</label>
+                        </div>
+
+                        <div class="form-floating mb-3">
+                            <input type="password" class="form-control" id="password" name="password" placeholder="Пароль" required>
+                            <label for="password">Пароль</label>
+                        </div>
+
+                        <div class="d-flex justify-content-between align-items-center mb-4">
+                            <div class="form-check">
+                                <input type="checkbox" class="form-check-input" id="remember" name="remember">
+                                <label class="form-check-label" for="remember">Запомнить меня</label>
+                            </div>
+                        </div>
+                        <div class="d-grid">
+                            <button type="submit" class="btn btn-primary btn-lg">Войти</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{# Пустой блок scripts удален, чтобы наследовать скрипты из base.html #}

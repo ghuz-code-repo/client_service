@@ -1,0 +1,416 @@
+{% extends "base.html" %}
+
+{% block title %}Карточка клиента: {{ client.fio }} - CRM Golden House{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4 animate-on-scroll">
+    <a href="{{ url_for('main.index') }}" class="btn btn-outline-secondary">← Назад к списку</a>
+    <div>
+        <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createApplicationModal">
+            Создать заявку
+        </button>
+    </div>
+</div>
+
+<div class="card shadow-sm mb-4 animate-on-scroll" style="animation-delay: 0.1s;">
+    <div class="card-header bg-light"><h1 class="card-title h3 mb-0">Карточка клиента</h1></div>
+    <div class="card-body">
+        <div class="row">
+            <div class="col-md-6"><p><strong>ФИО:</strong><br>{{ client.fio }}</p></div>
+            <div class="col-md-6"><p><strong>Телефон:</strong><br>{{ client.phone }}</p></div>
+            <div class="col-12"><p><strong>Номера договоров:</strong><br>{% for number in client.agreement_numbers %}<span class="badge bg-secondary fw-normal me-1">{{ number }}</span>{% else %}<span>Нет действующих договоров.</span>{% endfor %}</p></div>
+        </div>
+    </div>
+</div>
+
+<div class="card shadow-sm mb-4 animate-on-scroll" style="animation-delay: 0.2s;">
+     <div class="card-header bg-light"><h2 class="card-title h4 mb-0">Договоры клиента</h2></div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-striped table-hover mb-0 align-middle">
+                <thead>
+                    <tr>
+                        <th>№ Договора</th>
+                        <th>ЖК</th>
+                        <th>Дом</th>
+                        <th>Квартира</th>
+                        <th>Статус гарантии</th>
+                        <th>Стоимость</th>
+                        <th>К оплате</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for deal in client.deals %}
+                    <tr class="animate-on-scroll">
+                        <td><strong>{{ deal.agreement_number }}</strong></td>
+                        <td>{{ deal.complex_name }}</td>
+                        <td>{{ deal.house_name }}</td>
+                        <td><small class="text-muted">Эт: {{ deal.floor }}, Под: {{ deal.riser }}, №: {{ deal.flat_num }}</small></td>
+                        <td>
+                            {% set w_info = warranty_info.get(deal.house_name) %}
+                            {% if w_info %}
+                                <div class="d-flex flex-column small">
+                                    {% if w_info.house_date %}
+                                        {% if current_date > w_info.house_date %}
+                                            <span class="badge bg-danger mb-1">Дом: срок превышен</span>
+                                        {% else %}
+                                            <span class="badge bg-success mb-1">Дом: в сроке (до {{ w_info.house_date.strftime('%d.%m.%Y') }})</span>
+                                        {% endif %}
+                                    {% else %}
+                                        <span class="badge bg-secondary mb-1">Дом: нет данных</span>
+                                    {% endif %}
+
+                                    {% if w_info.apartments_date %}
+                                         {% if current_date > w_info.apartments_date %}
+                                            <span class="badge bg-danger">Квартиры: срок превышен</span>
+                                        {% else %}
+                                            <span class="badge bg-success">Квартиры: в сроке (до {{ w_info.apartments_date.strftime('%d.%m.%Y') }})</span>
+                                        {% endif %}
+                                    {% else %}
+                                        <span class="badge bg-secondary">Квартиры: нет данных</span>
+                                    {% endif %}
+                                </div>
+                            {% else %}
+                                <span class="badge bg-light text-dark">N/A</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ "%.2f"|format(deal.deal_sum|float) if deal.deal_sum else 'N/A' }}</td>
+                        <td><span class="text-danger fw-bold">{{ "%.2f"|format(deal.to_pay|float) if deal.to_pay else '0.00' }}</span></td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="7" class="text-center text-muted py-4">Информация о договорах отсутствует.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<div class="card shadow-sm animate-on-scroll" style="animation-delay: 0.3s;">
+    <div class="card-header bg-light"><h2 class="card-title h4 mb-0">Заявки клиента</h2></div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>№ Договора</th>
+                        <th>Тип</th>
+                        <th>Статус</th>
+                        <th>Ответственный</th>
+                        <th>Дата создания</th>
+                        <th>Срок выполнения</th>
+                        <th class="text-end">Действия</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for app in applications %}
+                    <tr id="app-{{ app.id }}" class="animate-on-scroll{% if app.is_overdue %} table-danger{% endif %}">
+                        <td>
+                            #{{ app.id }}
+                            {% if app.is_overdue %}
+                                <span class="badge bg-danger ms-1" title="Просрочено"><i class="bi bi-exclamation-triangle"></i></span>
+                            {% endif %}
+                        </td>
+                        <td>{{ app.agreement_number }}</td>
+                        <td>{{ app.application_type }}</td>
+                        <td>
+                            {% set status_color = {'В работе':'warning text-dark','Выполнено':'success','Частично выполнено':'info text-dark','Закрыто':'secondary','Отклонено':'danger'}.get(app.status, 'light text-dark') %}
+                            <span class="badge bg-{{ status_color }}">{{ app.status }}</span>
+                        </td>
+                        <td>{{ app.responsible_person.full_name if app.responsible_person else 'Не назначен' }}</td>
+                        <td>{{ app.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
+                        <td>
+                            {% if app.due_date %}
+                                {{ app.due_date.strftime('%d.%m.%Y') }}
+                                {% if app.is_overdue %}
+                                    <br><small class="text-danger">(просрочено)</small>
+                                {% endif %}
+                            {% else %}
+                                <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-end">
+                            {% set is_responsible = current_user.responsible_person_profile and current_user.responsible_person_profile.id == app.responsible_person_id %}
+                            {% if current_user.has_role('Админ') or is_responsible %}
+                            <button class="btn btn-sm btn-outline-dark" data-bs-toggle="modal" data-bs-target="#editStatusModal" data-app-id="{{ app.id }}" data-app-status="{{ app.status }}">
+                                <i class="bi bi-pencil-square"></i> Редактировать
+                            </button>
+                            {% endif %}
+                            <button class="btn btn-sm btn-outline-info" data-bs-toggle="modal" data-bs-target="#viewLogsModal" data-app-id="{{ app.id }}">
+                                <i class="bi bi-clock-history"></i> Логи
+                            </button>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="8" class="text-center text-muted py-4">У клиента еще нет заявок.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Модальное окно создания заявки -->
+<div class="modal fade" id="createApplicationModal" tabindex="-1" aria-labelledby="createApplicationModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header"><h5 class="modal-title" id="createApplicationModalLabel">Создание новой заявки</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+      <form action="{{ url_for('main.create_application', client_id=client.id) }}" method="post">
+        <div class="modal-body">
+            <div class="form-floating mb-3">
+                <select class="form-select" id="agreement_number" name="agreement_number" required>
+                    <option value="" selected>Выберите номер договора...</option>
+                    {% for number in client.agreement_numbers %}<option value="{{ number }}">{{ number }}</option>{% endfor %}
+                </select>
+                <label for="agreement_number">Привязать к договору</label>
+            </div>
+            <div class="form-floating mb-3">
+                <select class="form-select" id="application_type" name="application_type" required>
+                    <option value="" selected>Выберите тип...</option>
+                    {% for app_type in application_types %}
+                    <option value="{{ app_type.name }}" data-has-defects="{{ 'true' if app_type.has_defect_list else 'false' }}">{{ app_type.name }}</option>
+                    {% endfor %}
+                </select>
+                <label for="application_type">Тип заявки</label>
+            </div>
+
+            <div id="defect_fields_wrapper" style="display: none;"><div class="p-3 border rounded bg-light mb-3"><div class="d-flex justify-content-between align-items-center mb-2"><h6 class="mb-0">Информация о дефектах</h6><button type="button" id="add_defect_button" class="btn btn-sm btn-success"><i class="bi bi-plus-circle me-1"></i> Добавить дефект</button></div><div id="defects_container"></div></div></div>
+
+            <div class="form-floating mb-3">
+                <textarea class="form-control" id="comment" name="comment" placeholder="Комментарий к заявке" required style="height: 100px"></textarea>
+                <label for="comment">Комментарий к заявке</label>
+            </div>
+
+            <div class="form-floating mb-3">
+                <select class="form-select" id="source" name="source" required>
+                    <option value="" selected>Выберите источник заявки...</option>
+                    <option value="Звонок">Звонок</option>
+                    <option value="Email">Email</option>
+                    <option value="Личный визит">Личный визит</option>
+                    <option value="Сайт">Сайт</option>
+                    <option value="Другое">Другое</option>
+                </select>
+                <label for="source">Источник заявки</label>
+            </div>
+            
+            <div class="form-floating mb-3" id="custom_source_div" style="display: none;">
+                <input type="text" class="form-control" id="custom_source" name="custom_source" placeholder="Укажите источник">
+                <label for="custom_source">Укажите источник</label>
+            </div>
+
+            <div class="form-floating mb-3">
+                <select class="form-select" id="responsible_person" name="responsible_person_id" required disabled>
+                    <option value="" selected>Сначала выберите договор и тип заявки</option>
+                </select>
+                <label for="responsible_person">Ответственный</label>
+            </div>
+            <div id="responsible_loader" class="mt-2" style="display: none;"><div class="spinner-border spinner-border-sm" role="status"><span class="visually-hidden">Loading...</span></div><span class="ms-2">Поиск ответственных...</span></div>
+        </div>
+        <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button><button type="submit" class="btn btn-primary">Создать заявку</button></div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Модальное окно редактирования статуса -->
+<div class="modal fade" id="editStatusModal" tabindex="-1" aria-labelledby="editStatusModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header"><h5 class="modal-title" id="editStatusModalLabel">Изменить статус заявки</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+      <form id="editStatusForm" method="post">
+        <div class="modal-body">
+            <div class="form-floating mb-3">
+                <select class="form-select" id="statusSelect" name="status" required>
+                    <option selected disabled value="">Выберите статус...</option>
+                    {% for status in application_statuses %}{% if status != 'В работе' %}
+                    <option value="{{ status }}">{{ status }}</option>
+                    {% endif %}{% endfor %}
+                </select>
+                <label for="statusSelect">Новый статус</label>
+            </div>
+            <div class="form-floating mb-3">
+                <textarea class="form-control" id="statusComment" name="comment" placeholder="Комментарий к изменению" required style="height: 100px"></textarea>
+                <label for="statusComment">Комментарий к изменению</label>
+            </div>
+        </div>
+        <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button><button type="submit" class="btn btn-primary">Сохранить изменения</button></div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Модальное окно просмотра логов -->
+<div class="modal fade" id="viewLogsModal" tabindex="-1" aria-labelledby="viewLogsModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header"><h5 class="modal-title" id="viewLogsModalLabel">История изменений заявки</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+      <div class="modal-body" id="logsModalBody"></div>
+      <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Закрыть</button></div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const dealsMap = JSON.parse('{{ client.deals_map | tojson | safe }}');
+    const defectTypes = JSON.parse('{{ defect_types | tojson | safe }}');
+    const agreementSelect = document.getElementById('agreement_number');
+    const applicationTypeSelect = document.getElementById('application_type');
+    const responsibleSelect = document.getElementById('responsible_person');
+    const responsibleLoader = document.getElementById('responsible_loader');
+    const defectWrapper = document.getElementById('defect_fields_wrapper');
+    const defectsContainer = document.getElementById('defects_container');
+    const addDefectButton = document.getElementById('add_defect_button');
+    let defectCounter = 0;
+
+    function addDefectRow() {
+        const index = defectCounter++;
+        const defectRow = document.createElement('div');
+        defectRow.className = 'defect-row row gx-2 mb-2 align-items-center';
+        defectRow.setAttribute('data-index', index);
+        let optionsHtml = '<option value="" selected>Выберите тип...</option>';
+        defectTypes.forEach(type => { optionsHtml += `<option value="${type.name}">${type.name}</option>`; });
+
+        defectRow.innerHTML = `
+            <div class="col-md-5 form-floating">
+                <select class="form-select form-select-sm" name="defects-${index}-type" id="defect-type-${index}" required>${optionsHtml}</select>
+                <label for="defect-type-${index}">Тип дефекта</label>
+            </div>
+            <div class="col-md-6 form-floating">
+                <input type="text" class="form-control form-control-sm" name="defects-${index}-description" id="defect-desc-${index}" placeholder="Комментарий к дефекту" required>
+                <label for="defect-desc-${index}">Комментарий</label>
+            </div>
+            <div class="col-md-1 text-end">
+                <button type="button" class="btn btn-sm btn-outline-danger remove-defect-btn"><i class="bi bi-trash"></i></button>
+            </div>`;
+        defectsContainer.appendChild(defectRow);
+        defectRow.querySelector('.remove-defect-btn').addEventListener('click', function () { defectRow.remove(); });
+    }
+
+    applicationTypeSelect.addEventListener('change', function () {
+        const selectedOption = this.options[this.selectedIndex];
+        const hasDefects = selectedOption.getAttribute('data-has-defects') === 'true';
+
+        if (hasDefects) {
+            defectWrapper.style.display = 'block';
+            if (defectsContainer.children.length === 0) { addDefectRow(); }
+        } else {
+            defectWrapper.style.display = 'none';
+            defectsContainer.innerHTML = '';
+            defectCounter = 0;
+        }
+        // Также нужно вызвать загрузку ответственных, так как тип заявки изменился
+        fetchResponsiblePersons();
+    });
+
+    addDefectButton.addEventListener('click', addDefectRow);
+
+    async function fetchResponsiblePersons() {
+        const agreementNumber = agreementSelect.value;
+        const applicationType = applicationTypeSelect.value;
+        if (!agreementNumber || !applicationType) {
+            responsibleSelect.disabled = true;
+            return;
+        }
+        const complexName = dealsMap[agreementNumber];
+        if (!complexName) { console.error('Не удалось найти ЖК для договора:', agreementNumber); return; }
+        responsibleLoader.style.display = 'block';
+        responsibleSelect.disabled = true;
+        try {
+            const response = await fetch(`{{ url_for('main.get_responsible_persons') }}?complex_name=${encodeURIComponent(complexName)}&application_type=${encodeURIComponent(applicationType)}`);
+            if (!response.ok) throw new Error('Network response was not ok');
+            const persons = await response.json();
+            let options = '';
+            if (persons.length > 0) {
+                options = '<option value="" selected disabled>Выберите ответственного...</option>';
+                persons.forEach(person => { options += `<option value="${person.id}">${person.name} (${person.email})</option>`; });
+                responsibleSelect.disabled = false;
+            } else {
+                options = '<option value="" selected>Подходящие ответственные не найдены</option>';
+                responsibleSelect.disabled = true;
+            }
+            responsibleSelect.innerHTML = options;
+        } catch (error) {
+            console.error('Ошибка при загрузке ответственных:', error);
+            responsibleSelect.innerHTML = '<option value="">Ошибка загрузки</option>';
+            responsibleSelect.disabled = true;
+        } finally {
+            responsibleLoader.style.display = 'none';
+        }
+    }
+
+    agreementSelect.addEventListener('change', fetchResponsiblePersons);
+    
+    // Обработчик для показа/скрытия поля кастомного источника
+    const sourceSelect = document.getElementById('source');
+    const customSourceDiv = document.getElementById('custom_source_div');
+    const customSourceInput = document.getElementById('custom_source');
+    
+    sourceSelect.addEventListener('change', function() {
+        if (this.value === 'Другое') {
+            customSourceDiv.style.display = 'block';
+            customSourceInput.required = true;
+        } else {
+            customSourceDiv.style.display = 'none';
+            customSourceInput.required = false;
+            customSourceInput.value = '';
+        }
+    });
+
+    const editStatusModal = document.getElementById('editStatusModal');
+    if (editStatusModal) {
+        editStatusModal.addEventListener('show.bs.modal', event => {
+            const button = event.relatedTarget;
+            const appId = button.getAttribute('data-app-id');
+            const currentStatus = button.getAttribute('data-app-status');
+            const form = editStatusModal.querySelector('form');
+            form.action = `/client-service/application/${appId}/update_status`;
+            const title = editStatusModal.querySelector('.modal-title');
+            title.textContent = `Изменить статус заявки #${appId}`;
+            const statusSelect = editStatusModal.querySelector('#statusSelect');
+            Array.from(statusSelect.options).forEach(option => { option.disabled = (option.value === currentStatus); });
+        });
+    }
+
+    const viewLogsModal = document.getElementById('viewLogsModal');
+    if (viewLogsModal) {
+        viewLogsModal.addEventListener('show.bs.modal', async event => {
+            const button = event.relatedTarget;
+            const appId = button.getAttribute('data-app-id');
+            const modalTitle = viewLogsModal.querySelector('.modal-title');
+            const modalBody = viewLogsModal.querySelector('#logsModalBody');
+            modalTitle.textContent = `История изменений заявки #${appId}`;
+            modalBody.innerHTML = '<div class="text-center"><div class="spinner-border" role="status"><span class="visually-hidden">Загрузка...</span></div></div>';
+            try {
+                const response = await fetch(`/client-service/api/application/${appId}/logs`);
+                if (!response.ok) throw new Error('Ошибка сети при загрузке логов.');
+                const logs = await response.json();
+                if (logs.length === 0) {
+                    modalBody.innerHTML = '<p class="text-center text-muted">История изменений для этой заявки пуста.</p>';
+                    return;
+                }
+                let logsHtml = '<ul class="list-group">';
+                logs.forEach(log => {
+                    logsHtml += `<li class="list-group-item">
+                        <div class="d-flex w-100 justify-content-between">
+                            <h6 class="mb-1">${log.action}</h6>
+                            <small class="text-muted">${log.timestamp}</small>
+                        </div>
+                        <p class="mb-1">${log.comment || 'Без комментария.'}</p>
+                        <small class="text-muted">Автор: ${log.author || 'Система'}</small>
+                    </li>`;
+                });
+                logsHtml += '</ul>';
+                modalBody.innerHTML = logsHtml;
+            } catch (error) {
+                modalBody.innerHTML = `<div class="alert alert-danger">${error.message}</div>`;
+            }
+        });
+    }
+});
+</script>
+{% endblock %}

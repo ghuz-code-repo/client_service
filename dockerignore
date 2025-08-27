@@ -1,0 +1,12 @@
+# .dockerignore
+.dockerignore
+Dockerfile
+docker-compose.yml
+.env
+.git
+.gitignore
+__pycache__
+*.pyc
+*.db
+*.sqlite3
+instance/

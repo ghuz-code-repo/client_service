@@ -1,0 +1,29 @@
+services:
+  client-service-service:
+    restart: always
+    image: client-service-service
+    container_name: client-service-service
+    build:
+      context: .
+      dockerfile: Dockerfile
+    labels:
+      - "nginx.auth=false"
+    ports:
+      - "80:80"
+    volumes:
+      - ./instance:/app/instance
+      - ./app/word_templates:/app/app/word_templates
+      - ./app/templates:/app/app/templates
+    env_file:
+      - .env
+#     networks:
+#       - service_network
+#       - public_network
+
+# networks:
+#   service_network:
+#     external: true
+#     name: service_network
+#   public_network:
+#     external: true
+#     name: public_network

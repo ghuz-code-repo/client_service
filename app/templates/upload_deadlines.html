@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+
+{% block title %}Загрузка сроков гарантии{% endblock %}
+
+{% block content %}
+<div class="card shadow-sm">
+    <div class="card-header bg-light">
+        <h1 class="card-title h3 mb-0">Загрузка сроков гарантийного обслуживания</h1>
+    </div>
+    <div class="card-body">
+        <div class="alert alert-primary" role="alert">
+            <h4 class="alert-heading">Требования к файлу</h4>
+            <p>Чтобы добавить или обновить сроки гарантии для домов, сначала скачайте шаблон, заполните его и загрузите обратно в систему.</p>
+            <ul>
+                <li><strong>Колонка A:</strong> Название Дома (точное соответствие названию в системе, например "Дом 1.1").</li>
+                <li><strong>Колонка B:</strong> Срок гарантии по Дому (в формате <strong>ДД.ММ.ГГГГ</strong>).</li>
+                <li><strong>Колонка C:</strong> Срок гарантии по Квартирам (в формате <strong>ДД.ММ.ГГГГ</strong>).</li>
+            </ul>
+            <hr>
+            <p class="mb-0">Сроки будут обновлены для каждого конкретного дома, указанного в файле.</p>
+        </div>
+
+        <form method="post" enctype="multipart/form-data">
+            <div class="mb-3">
+                <label for="file" class="form-label"><strong>Шаг 2:</strong> Выберите заполненный .xlsx файл</label>
+                <input class="form-control" type="file" id="file" name="file" accept=".xlsx" required>
+            </div>
+            <div class="d-flex align-items-center">
+                 <a href="{{ url_for('main.download_deadlines_template') }}" class="btn btn-success me-3">
+                    <i class="bi bi-download me-1"></i> Шаг 1: Скачать шаблон
+                </a>
+                <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-upload me-1"></i> Шаг 3: Загрузить и обработать
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+
+{% block title %}Управление типами заявок{% endblock %}
+
+{% block content %}
+<div class="row">
+    <!-- Форма добавления нового типа заявки -->
+    <div class="col-lg-5 mb-4 mb-lg-0">
+        <div class="card shadow-sm animate-on-scroll">
+            <div class="card-header">
+                <h3 class="h5 mb-0">Добавить новый тип заявки</h3>
+            </div>
+            <div class="card-body">
+                <form action="{{ url_for('main.manage_application_types') }}" method="post" enctype="multipart/form-data">
+                    <div class="form-floating mb-3">
+                        <input type="text" class="form-control" id="name" name="name" placeholder="Например, Претензия" required>
+                        <label for="name">Название типа</label>
+                    </div>
+                    <div class="mb-3">
+                        <label for="template" class="form-label">Шаблон Word (.docx)</label>
+                        <input class="form-control" type="file" id="template" name="template" accept=".docx" required>
+                    </div>
+                    <div class="form-check form-switch mb-3">
+                      <input class="form-check-input" type="checkbox" role="switch" id="has_defect_list" name="has_defect_list">
+                      <label class="form-check-label" for="has_defect_list">Требует отображения списка дефектов?</label>
+                    </div>
+                    <div class="form-floating mb-4">
+                        <input type="number" class="form-control" id="execution_days" name="execution_days" 
+                               placeholder="Количество дней" min="1" value="3" required>
+                        <label for="execution_days">Срок выполнения (дней)</label>
+                    </div>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-plus-circle me-1"></i> Добавить
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Список существующих типов -->
+    <div class="col-lg-7">
+        <h2 class="h4 mb-3">Существующие типы заявок</h2>
+        <div class="card shadow-sm animate-on-scroll" style="animation-delay: 0.1s;">
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Название</th>
+                                <th>Файл шаблона</th>
+                                <th>Список дефектов</th>
+                                <th>Срок (дней)</th>
+                                <th class="text-end">Действие</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for app_type in app_types %}
+                            <tr>
+                                <td>{{ app_type.name }}</td>
+                                <td>
+                                    {% if app_type.template_filename %}
+                                        <span class="badge bg-secondary fw-normal"><i class="bi bi-file-earmark-word"></i> {{ app_type.template_filename }}</span>
+                                    {% else %}
+                                        <span class="badge bg-warning text-dark">Нет шаблона</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if app_type.has_defect_list %}
+                                        <i class="bi bi-check-circle-fill text-success" title="Да"></i>
+                                    {% else %}
+                                        <i class="bi bi-x-circle text-muted" title="Нет"></i>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <span class="badge bg-info text-dark">{{ app_type.execution_days }}</span>
+                                </td>
+                                <td class="text-end">
+                                    <div class="btn-group" role="group">
+                                        {% if app_type.template_filename %}
+                                        <a href="{{ url_for('main.download_application_template', type_id=app_type.id) }}" 
+                                           class="btn btn-sm btn-outline-primary" 
+                                           title="Скачать шаблон">
+                                            <i class="bi bi-download"></i>
+                                        </a>
+                                        {% endif %}
+                                        <form action="{{ url_for('main.delete_application_type', type_id=app_type.id) }}" 
+                                              method="post" 
+                                              onsubmit="return confirm('Вы уверены, что хотите удалить этот тип заявки и связанный с ним шаблон?');" 
+                                              style="display: inline;">
+                                            <button type="submit" class="btn btn-sm btn-outline-danger" title="Удалить">
+                                                <i class="bi bi-trash"></i>
+                                            </button>
+                                        </form>
+                                    </div>
+                                </td>
+                            </tr>
+                            {% else %}
+                            <tr>
+                                <td colspan="5" class="text-center text-muted py-4">Типы заявок еще не добавлены.</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Шпаргалка по меткам -->
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card shadow-sm animate-on-scroll" style="animation-delay: 0.2s;">
+            <div class="card-header">
+                <h2 class="h5 mb-0">Шпаргалка по меткам для Word-шаблонов</h2>
+            </div>
+             <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-bordered table-striped mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th style="width: 35%;">Метка</th>
+                                <th>Описание</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for tag in template_tags %}
+                            <tr>
+                                <td><code>{{ tag.tag }}</code></td>
+                                <td>{{ tag.desc }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

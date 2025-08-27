@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+
+{% block title %}Управление типами дефектов{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-4">
+        <div class="card shadow-sm">
+            <div class="card-header">
+                <h3 class="h5 mb-0">Добавить новый тип</h3>
+            </div>
+            <div class="card-body">
+                <form action="{{ url_for('main.manage_defect_types') }}" method="post">
+                    <div class="mb-3">
+                        <label for="name" class="form-label">Название типа дефекта</label>
+                        <input type="text" class="form-control" id="name" name="name" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Добавить</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-8">
+        <h1 class="h3 mb-3">Существующие типы дефектов</h1>
+        <div class="card shadow-sm">
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Название</th>
+                                <th class="text-end">Действие</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for defect_type in defect_types %}
+                            <tr>
+                                <td>{{ defect_type.name }}</td>
+                                <td class="text-end">
+                                    <form action="{{ url_for('main.delete_defect_type', type_id=defect_type.id) }}" method="post" onsubmit="return confirm('Вы уверены, что хотите удалить этот тип дефекта?');">
+                                        <button type="submit" class="btn btn-sm btn-outline-danger">
+                                            <i class="bi bi-trash"></i>
+                                        </button>
+                                    </form>
+                                </td>
+                            </tr>
+                            {% else %}
+                            <tr>
+                                <td colspan="2" class="text-center text-muted py-4">Типы дефектов еще не добавлены.</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

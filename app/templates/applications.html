@@ -1,0 +1,377 @@
+{% extends "base.html" %}
+
+{% block title %}Список заявок{% endblock %}
+
+{% block content %}
+<!-- Панель фильтрации -->
+<div class="card shadow-sm mb-4">
+    <div class="card-header bg-light">
+        <h2 class="card-title h5 mb-0">Фильтры и сортировка</h2>
+    </div>
+    <div class="card-body">
+        <form method="get" action="{{ url_for('main.applications') }}" id="filterForm">
+            <div class="row g-3">
+                <div class="col-md-3">
+                    <label for="status" class="form-label">Статус</label>
+                    <select class="form-select" id="status" name="status">
+                        <option value="">Все статусы</option>
+                        <option value="В работе" {% if request.args.get('status') == 'В работе' %}selected{% endif %}>В работе</option>
+                        <option value="Выполнено" {% if request.args.get('status') == 'Выполнено' %}selected{% endif %}>Выполнено</option>
+                        <option value="Частично выполнено" {% if request.args.get('status') == 'Частично выполнено' %}selected{% endif %}>Частично выполнено</option>
+                        <option value="Закрыто" {% if request.args.get('status') == 'Закрыто' %}selected{% endif %}>Закрыто</option>
+                        <option value="Отклонено" {% if request.args.get('status') == 'Отклонено' %}selected{% endif %}>Отклонено</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label for="date_from" class="form-label">Дата создания с</label>
+                    <input type="date" class="form-control" id="date_from" name="date_from" value="{{ request.args.get('date_from', '') }}">
+                </div>
+                <div class="col-md-3">
+                    <label for="date_to" class="form-label">Дата создания по</label>
+                    <input type="date" class="form-control" id="date_to" name="date_to" value="{{ request.args.get('date_to', '') }}">
+                </div>
+                <div class="col-md-3">
+                    <label for="search" class="form-label">Поиск</label>
+                    <input type="text" class="form-control" id="search" name="search" placeholder="Клиент, № договора..." value="{{ request.args.get('search', '') }}">
+                </div>
+            </div>
+            <div class="row g-3 mt-2">
+                <div class="col-md-3">
+                    <label for="type" class="form-label">Тип заявки</label>
+                    <select class="form-select" id="type" name="type">
+                        <option value="">Все типы</option>
+                        {% for app_type in application_types %}
+                        <option value="{{ app_type }}" {% if request.args.get('type') == app_type %}selected{% endif %}>{{ app_type }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label for="overdue" class="form-label">Просроченные</label>
+                    <select class="form-select" id="overdue" name="overdue">
+                        <option value="">Все</option>
+                        <option value="yes" {% if request.args.get('overdue') == 'yes' %}selected{% endif %}>Только просроченные</option>
+                        <option value="no" {% if request.args.get('overdue') == 'no' %}selected{% endif %}>Не просроченные</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label for="sort" class="form-label">Сортировка</label>
+                    <select class="form-select" id="sort" name="sort">
+                        <option value="created_desc" {% if request.args.get('sort', 'created_desc') == 'created_desc' %}selected{% endif %}>По дате создания (новые сначала)</option>
+                        <option value="created_asc" {% if request.args.get('sort') == 'created_asc' %}selected{% endif %}>По дате создания (старые сначала)</option>
+                        <option value="due_desc" {% if request.args.get('sort') == 'due_desc' %}selected{% endif %}>По сроку выполнения (ближайшие)</option>
+                        <option value="due_asc" {% if request.args.get('sort') == 'due_asc' %}selected{% endif %}>По сроку выполнения (дальние)</option>
+                        <option value="id_desc" {% if request.args.get('sort') == 'id_desc' %}selected{% endif %}>По ID (убывание)</option>
+                        <option value="id_asc" {% if request.args.get('sort') == 'id_asc' %}selected{% endif %}>По ID (возрастание)</option>
+                    </select>
+                </div>
+                <div class="col-md-3 d-flex align-items-end">
+                    <button type="submit" class="btn btn-primary me-2">
+                        <i class="bi bi-filter"></i> Применить
+                    </button>
+                    <a href="{{ url_for('main.applications') }}" class="btn btn-secondary me-2">
+                        <i class="bi bi-x-circle"></i> Сбросить
+                    </a>
+                    <button type="button" class="btn btn-success" onclick="exportToExcel()">
+                        <i class="bi bi-file-earmark-excel"></i> Excel
+                    </button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card shadow-sm">
+    <div class="card-header bg-light d-flex justify-content-between align-items-center">
+        <h1 class="card-title h3 mb-0">Все заявки ({{ applications.total }})</h1>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>ID</th>
+                        <th>Клиент</th>
+                        <th>№ Договора</th>
+                        <th>Тип</th>
+                        <th>Статус</th>
+                        <th>Ответственный</th>
+                        <th>Создатель</th>
+                        <th>Дата создания</th>
+                        <th>Источник</th>
+                        <th>Срок выполнения</th>
+                        <th>Дата завершения</th>
+                    </tr>
+                </thead>
+               <tbody>
+                    {% for app in applications.items %}
+                    <tr {% if app.is_overdue %}class="table-danger"{% endif %}>
+                        <td>
+                            #{{ app.id }}
+                            {% if app.is_overdue %}
+                                <span class="badge bg-danger ms-1" title="Просрочено"><i class="bi bi-exclamation-triangle"></i></span>
+                            {% endif %}
+                            {% if current_user.has_role('Админ') %}
+                            <button type="button"
+                                    class="btn btn-xs btn-outline-danger ms-2"
+                                    data-bs-toggle="modal"
+                                    data-bs-target="#deleteApplicationModal"
+                                    data-app-id="{{ app.id }}"
+                                    title="Удалить заявку">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                            {% endif %}
+                            <button type="button"
+                                    class="btn btn-xs btn-outline-info ms-1"
+                                    onclick="viewApplicationHistory({{ app.id }})"
+                                    title="Просмотр истории">
+                                <i class="bi bi-clock-history"></i>
+                            </button>
+                        </td>
+                        <td>
+                            {% if app.client %}
+                                {% if app.client.contacts_buy_name == 'СИСТЕМНЫЙ КЛИЕНТ (для заявок без договора)' %}
+                                    <span class="badge bg-info text-dark">Без клиента</span>
+                                    {% if app.comment and ('ФИО:' in app.comment or 'Телефон:' in app.comment) %}
+                                        <br>
+                                        <small class="text-muted">
+                                            {% set comment_lines = app.comment.split('\n') %}
+                                            {% if comment_lines|length > 0 and 'Контактные данные:' in comment_lines[0] %}
+                                                {{ comment_lines[0].replace('Контактные данные: ', '') }}
+                                            {% endif %}
+                                        </small>
+                                    {% endif %}
+                                {% else %}
+                                    <a href="{{ url_for('main.client_card', client_id=app.client_id) }}">{{ app.client.contacts_buy_name }}</a>
+                                {% endif %}
+                            {% else %}
+                                <span class="text-muted">N/A</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if app.agreement_number == 'SYSTEM-001' %}
+                                <span class="badge bg-secondary">Без договора</span>
+                            {% else %}
+                                {{ app.agreement_number }}
+                            {% endif %}
+                        </td>
+                        <td>{{ app.application_type }}</td>
+                        <td>
+                            {% set status_color = {'В работе':'warning text-dark','Выполнено':'success','Частично выполнено':'info text-dark','Закрыто':'secondary','Отклонено':'danger'}.get(app.status, 'light text-dark') %}
+                            <span class="badge bg-{{ status_color }}">{{ app.status }}</span>
+                        </td>
+                        <td>{{ app.responsible_person.full_name if app.responsible_person else 'Не назначен' }}</td>
+                        <td>{{ app.creator.username if app.creator else 'Система' }}</td>
+                        <td>{{ app.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
+                        <td>{{ app.source if app.source else 'Не указан' }}</td>
+                        <td>
+                            {% if app.due_date %}
+                                {{ app.due_date.strftime('%d.%m.%Y') }}
+                                {% if app.is_overdue %}
+                                    <span class="text-danger">(просрочено)</span>
+                                {% endif %}
+                            {% else %}
+                                <span class="text-muted">Не установлен</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if app.completed_at %}
+                                {{ app.completed_at.strftime('%d.%m.%Y %H:%M') }}
+                            {% else %}
+                                <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="11" class="text-center text-muted py-4">Нет заявок, соответствующих вашим правам доступа.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+{% if applications and applications.pages > 1 %}
+<nav aria-label="Page navigation" class="mt-4">
+    <ul class="pagination justify-content-center">
+        <li class="page-item {% if not applications.has_prev %}disabled{% endif %}">
+            <a class="page-link" href="{{ url_for('main.applications', page=applications.prev_num, status=request.args.get('status'), type=request.args.get('type'), date_from=request.args.get('date_from'), date_to=request.args.get('date_to'), search=request.args.get('search'), overdue=request.args.get('overdue'), sort=request.args.get('sort')) }}">‹</a>
+        </li>
+        {% for p in applications.iter_pages() %}
+            {% if p %}
+                <li class="page-item {% if p == applications.page %}active{% endif %}">
+                    <a class="page-link" href="{{ url_for('main.applications', page=p, status=request.args.get('status'), type=request.args.get('type'), date_from=request.args.get('date_from'), date_to=request.args.get('date_to'), search=request.args.get('search'), overdue=request.args.get('overdue'), sort=request.args.get('sort')) }}">{{ p }}</a>
+                </li>
+            {% else %}
+                <li class="page-item disabled"><span class="page-link">…</span></li>
+            {% endif %}
+        {% endfor %}
+        <li class="page-item {% if not applications.has_next %}disabled{% endif %}">
+            <a class="page-link" href="{{ url_for('main.applications', page=applications.next_num, status=request.args.get('status'), type=request.args.get('type'), date_from=request.args.get('date_from'), date_to=request.args.get('date_to'), search=request.args.get('search'), overdue=request.args.get('overdue'), sort=request.args.get('sort')) }}">›</a>
+        </li>
+    </ul>
+</nav>
+{% endif %}
+
+<div class="modal fade" id="deleteApplicationModal" tabindex="-1" aria-labelledby="deleteApplicationModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="deleteApplicationModalLabel">Подтвердить удаление</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <form method="post">
+          <div class="modal-body">
+              <p id="deleteModalBody">Вы уверены, что хотите удалить эту заявку?</p>
+              <p class="text-danger small">Это действие нельзя будет отменить.</p>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+            <button type="submit" class="btn btn-danger">Удалить</button>
+          </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Модальное окно для просмотра истории заявки -->
+<div class="modal fade" id="applicationHistoryModal" tabindex="-1" aria-labelledby="applicationHistoryModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="applicationHistoryModalLabel">История заявки</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div id="historyContent">
+          <div class="text-center">
+            <div class="spinner-border" role="status">
+              <span class="visually-hidden">Загрузка...</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Закрыть</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+
+{% block scripts %}
+{{ super() }}
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const deleteModal = document.getElementById('deleteApplicationModal');
+    if (deleteModal) {
+        // Создаем ШАБЛОН URL с помощью Flask, чтобы избежать ошибок с префиксами
+        const urlTemplate = "{{ url_for('main.delete_application', app_id=0) }}";
+
+        deleteModal.addEventListener('show.bs.modal', function (event) {
+            const button = event.relatedTarget;
+            const appId = button.getAttribute('data-app-id');
+            const form = deleteModal.querySelector('form');
+
+            // Создаем правильный URL для формы, заменяя '0' на реальный ID заявки
+            form.action = urlTemplate.replace('0', appId);
+
+            // Обновляем текст в модальном окне
+            const modalTitle = deleteModal.querySelector('.modal-title');
+            modalTitle.textContent = `Подтвердить удаление заявки #${appId}`;
+            const modalBody = deleteModal.querySelector('#deleteModalBody');
+            modalBody.textContent = `Вы уверены, что хотите безвозвратно удалить заявку #${appId}? Все связанные с ней данные (дефекты, логи) также будут удалены.`;
+        });
+    }
+});
+
+// Функция просмотра истории заявки
+function viewApplicationHistory(appId) {
+    const modal = new bootstrap.Modal(document.getElementById('applicationHistoryModal'));
+    const modalTitle = document.querySelector('#applicationHistoryModalLabel');
+    const historyContent = document.querySelector('#historyContent');
+    
+    // Обновляем заголовок
+    modalTitle.textContent = `История заявки #${appId}`;
+    
+    // Показываем спиннер загрузки
+    historyContent.innerHTML = `
+        <div class="text-center">
+            <div class="spinner-border" role="status">
+                <span class="visually-hidden">Загрузка...</span>
+            </div>
+        </div>
+    `;
+    
+    // Показываем модальное окно
+    modal.show();
+    
+    // Загружаем историю
+    fetch(`{{ url_for('main.get_application_logs', app_id=0) }}`.replace('0', appId))
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Ошибка загрузки данных');
+            }
+            return response.json();
+        })
+        .then(logs => {
+            if (logs.length === 0) {
+                historyContent.innerHTML = '<p class="text-muted text-center">История изменений отсутствует</p>';
+            } else {
+                let html = '<div class="timeline">';
+                logs.forEach((log, index) => {
+                    html += `
+                        <div class="card mb-3 ${index === 0 ? 'border-primary' : ''}">
+                            <div class="card-header ${index === 0 ? 'bg-primary text-white' : 'bg-light'}">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <span class="fw-bold">${log.action}</span>
+                                    <small>${log.timestamp}</small>
+                                </div>
+                            </div>
+                            <div class="card-body">
+                                <p class="mb-1">${log.comment}</p>
+                                <small class="text-muted">Автор: ${log.author}</small>
+                            </div>
+                        </div>
+                    `;
+                });
+                html += '</div>';
+                historyContent.innerHTML = html;
+            }
+        })
+        .catch(error => {
+            historyContent.innerHTML = `
+                <div class="alert alert-danger" role="alert">
+                    <i class="bi bi-exclamation-triangle-fill me-2"></i>
+                    Не удалось загрузить историю заявки: ${error.message}
+                </div>
+            `;
+        });
+}
+
+// Функция экспорта в Excel
+function exportToExcel() {
+    // Получаем текущие параметры фильтрации из формы
+    const form = document.getElementById('filterForm');
+    const formData = new FormData(form);
+    const params = new URLSearchParams();
+    
+    // Копируем все параметры фильтрации
+    for (let [key, value] of formData.entries()) {
+        if (value) {
+            params.append(key, value);
+        }
+    }
+    
+    // Добавляем параметр для экспорта
+    params.append('export', 'excel');
+    
+    // Формируем URL и открываем в новом окне для скачивания
+    const exportUrl = "{{ url_for('main.export_applications') }}?" + params.toString();
+    window.open(exportUrl, '_blank');
+}
+</script>
+{% endblock %}

@@ -1,0 +1,59 @@
+<!-- templates/reports.html -->
+{% extends "base.html" %}
+
+{% block title %}Отчетность по заявкам{% endblock %}
+
+{% block content %}
+<div class="card shadow-sm">
+    <div class="card-header bg-light">
+        <h1 class="card-title h3 mb-0">Формирование отчета по заявкам</h1>
+    </div>
+    <div class="card-body">
+        <p class="card-text text-muted">Выберите диапазон дат для выгрузки всех заявок в формате Excel.</p>
+        <form action="{{ url_for('main.download_report') }}" method="post">
+            <div class="row g-3 align-items-end">
+                <div class="col-md-5">
+                    <label for="start_date" class="form-label">Дата начала</label>
+                    <input type="date" class="form-control" id="start_date" name="start_date" required>
+                </div>
+                <div class="col-md-5">
+                    <label for="end_date" class="form-label">Дата окончания</label>
+                    <input type="date" class="form-control" id="end_date" name="end_date" required>
+                </div>
+                <div class="col-md-2">
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="bi bi-download me-1"></i> Скачать отчет
+                    </button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Отчет по завершенным заявкам -->
+<div class="card shadow-sm mt-4">
+    <div class="card-header bg-light">
+        <h2 class="card-title h4 mb-0">Отчет по завершенным заявкам</h2>
+    </div>
+    <div class="card-body">
+        <p class="card-text text-muted">Выберите диапазон дат для выгрузки заявок, завершенных в указанный период.</p>
+        <form action="{{ url_for('main.download_completed_report') }}" method="post">
+            <div class="row g-3 align-items-end">
+                <div class="col-md-5">
+                    <label for="completed_start_date" class="form-label">Дата начала</label>
+                    <input type="date" class="form-control" id="completed_start_date" name="start_date" required>
+                </div>
+                <div class="col-md-5">
+                    <label for="completed_end_date" class="form-label">Дата окончания</label>
+                    <input type="date" class="form-control" id="completed_end_date" name="end_date" required>
+                </div>
+                <div class="col-md-2">
+                    <button type="submit" class="btn btn-success w-100">
+                        <i class="bi bi-check-circle me-1"></i> Скачать отчет
+                    </button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

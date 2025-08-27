@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+
+{% block title %}Журнал отправки Email{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1 class="h3">Журнал отправки Email</h1>
+</div>
+
+<div class="card shadow-sm">
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>ID Заявки</th>
+                        <th>Время</th>
+                        <th>Получатель</th>
+                        <th>Тема</th>
+                        <th>Статус</th>
+                        <th>Ответ сервера</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for log in logs.items %}
+                    <tr>
+                        <td>
+                            {% if log.application_id %}
+                            <a href="{{ url_for('main.client_card', client_id=log.application.client_id) }}#app-{{log.application_id}}">#{{ log.application_id }}</a>
+                            {% else %}
+                            N/A
+                            {% endif %}
+                        </td>
+                        <td>{{ log.timestamp.strftime('%d.%m.%Y %H:%M:%S') }}</td>
+                        <td>{{ log.recipient }}</td>
+                        <td>{{ log.subject }}</td>
+                        <td>
+                            {% if log.status == 'Success' %}
+                            <span class="badge bg-success">Успех</span>
+                            {% else %}
+                            <span class="badge bg-danger">Ошибка</span>
+                            {% endif %}
+                        </td>
+                        <td style="max-width: 300px; word-wrap: break-word;">
+                            <small class="text-muted">{{ log.server_response }}</small>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="6" class="text-center text-muted py-4">Журнал пуст.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<nav aria-label="Page navigation" class="mt-4">
+    <ul class="pagination justify-content-center">
+        <li class="page-item {% if not logs.has_prev %}disabled{% endif %}">
+            <a class="page-link" href="{{ url_for('main.email_logs', page=logs.prev_num) }}">‹</a>
+        </li>
+        {% for p in logs.iter_pages() %}
+            {% if p %}
+                <li class="page-item {% if p == logs.page %}active{% endif %}">
+                    <a class="page-link" href="{{ url_for('main.email_logs', page=p) }}">{{ p }}</a>
+                </li>
+            {% else %}
+                <li class="page-item disabled"><span class="page-link">…</span></li>
+            {% endif %}
+        {% endfor %}
+        <li class="page-item {% if not logs.has_next %}disabled{% endif %}">
+            <a class="page-link" href="{{ url_for('main.email_logs', page=logs.next_num) }}">›</a>
+        </li>
+    </ul>
+</nav>
+{% endblock %}

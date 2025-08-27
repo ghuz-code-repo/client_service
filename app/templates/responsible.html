@@ -1,0 +1,309 @@
+{% extends "base.html" %}
+
+{% block title %}Управление ответственными лицами{% endblock %}
+
+{% block content %}
+
+<!-- Стили для анимаций, добавленные для этой страницы -->
+<style>
+    /* Анимация плавного появления элементов */
+    @keyframes fadeIn {
+        from {
+            opacity: 0;
+            transform: translateY(15px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+
+    /* Анимация "выезда" строк таблицы снизу вверх */
+    @keyframes slideInUp {
+        from {
+            transform: translateY(25px);
+            opacity: 0;
+        }
+        to {
+            transform: translateY(0);
+            opacity: 1;
+        }
+    }
+
+    /* Класс для применения анимации появления */
+    .fade-in-element {
+        animation: fadeIn 0.6s ease-out forwards;
+        opacity: 0; /* Изначально скрыть */
+    }
+
+    /* Класс для анимации строк таблицы */
+    .animated-row {
+        opacity: 0; /* Изначально скрыть */
+        animation: slideInUp 0.5s ease-out forwards;
+    }
+
+    /* Улучшенный эффект при наведении на строку таблицы */
+    .table-hover tbody tr {
+        transition: background-color 0.2s ease, transform 0.2s ease;
+    }
+
+    .table-hover tbody tr:hover {
+        transform: scale(1.01);
+        box-shadow: 0 6px 12px rgba(0,0,0,0.08);
+        z-index: 10;
+        position: relative;
+    }
+</style>
+
+<div class="d-flex justify-content-between align-items-center mb-4 fade-in-element">
+    <h1 class="h3">Ответственные лица</h1>
+    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#editPersonModal" data-person-id="new">
+        <i class="bi bi-plus-circle me-1"></i> Добавить ответственного
+    </button>
+</div>
+
+<div class="card shadow-sm fade-in-element" style="animation-delay: 0.1s;">
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>ФИО</th>
+                        <th>Email</th>
+                        <th>Закрепленные типы заявок</th>
+                        <th>Закрепленные ЖК</th>
+                        <th class="text-end">Действия</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for person in persons %}
+                    <tr>
+                        <td><strong>{{ person.full_name }}</strong></td>
+                        <td>{{ person.email }}</td>
+                        <td>
+                            {% for type in person.application_types %}
+                                <span class="badge bg-info fw-normal">{{ type }}</span>
+                            {% else %}
+                                <span class="text-muted small">Нет</span>
+                            {% endfor %}
+                        </td>
+                        <td>
+                            {% for complex_name in person.assigned_complexes|map(attribute='complex_name')|unique|sort %}
+                                <span class="badge bg-secondary fw-normal">{{ complex_name }}</span>
+                            {% else %}
+                                <span class="text-muted small">Нет</span>
+                            {% endfor %}
+                        </td>
+                        <td class="text-end">
+                            <button class="btn btn-sm btn-outline-dark edit-btn"
+                                    data-bs-toggle="modal"
+                                    data-bs-target="#editPersonModal"
+                                    data-person-id="{{ person.id }}"
+                                    data-full-name="{{ person.full_name }}"
+                                    data-email="{{ person.email }}"
+                                    data-app-types='{{ person.application_types_json }}'
+                                    data-complexes='{{ person.assigned_complexes|map(attribute='complex_name')|unique|list|tojson }}'
+                                    data-user-id="{{ person.user_id or '' }}">
+                                <i class="bi bi-pencil"></i>
+                            </button>
+                            <button class="btn btn-sm btn-outline-danger delete-btn"
+                                    data-bs-toggle="modal"
+                                    data-bs-target="#deletePersonModal"
+                                    data-person-id="{{ person.id }}"
+                                    data-person-name="{{ person.full_name }}">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="5" class="text-center text-muted py-4">
+                            Ответственные лица еще не добавлены.
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Модальное окно для создания/редактирования -->
+<div class="modal fade" id="editPersonModal" tabindex="-1" aria-labelledby="editPersonModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <form id="editPersonForm" method="post">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="editPersonModalLabel">Добавить ответственного</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" name="person_id" id="person_id">
+                    <div class="mb-3">
+                        <label for="full_name" class="form-label">ФИО</label>
+                        <input type="text" class="form-control" id="full_name" name="full_name" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="email" class="form-label">Email</label>
+                        <input type="email" class="form-control" id="email" name="email" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="user_id" class="form-label">Привязать к пользователю системы (необязательно)</label>
+                        <select class="form-select" id="user_id" name="user_id">
+                            <option value="">Не привязывать</option>
+                            {% for user in all_users %}
+                            <option value="{{ user.id }}">{{ user.username }} ({{ user.role }})</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Типы заявок</label>
+                        <div>
+                        {% for app_type in all_application_types %}
+                            <div class="form-check form-check-inline">
+                                <input class="form-check-input" type="checkbox" name="application_types" id="type_{{ app_type.id }}" value="{{ app_type.name }}">
+                                <label class="form-check-label" for="type_{{ app_type.id }}">{{ app_type.name }}</label>
+                            </div>
+                        {% else %}
+                            <p class="text-muted small">Типы заявок еще не созданы в <a href="{{ url_for('main.manage_application_types') }}">справочнике</a>.</p>
+                        {% endfor %}
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Закрепленные ЖК</label>
+                        <div style="max-height: 200px; overflow-y: auto;" class="border p-2 rounded">
+                            {% for complex_name in all_complex_names %}
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="assigned_complexes" value="{{ complex_name }}" id="complex_{{ loop.index }}">
+                                <label class="form-check-label" for="complex_{{ loop.index }}">
+                                    {{ complex_name }}
+                                </label>
+                            </div>
+                            {% else %}
+                                <p class="text-danger small m-2">Список ЖК для выбора пуст. Проверьте синхронизацию данных.</p>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                    <button type="submit" class="btn btn-primary">Сохранить</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Модальное окно для удаления -->
+<div class="modal fade" id="deletePersonModal" tabindex="-1" aria-labelledby="deletePersonModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form id="deletePersonForm" method="post">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="deletePersonModalLabel">Подтвердить удаление</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p>Вы уверены, что хотите удалить ответственного <strong id="personNameToDelete"></strong>?</p>
+                    <p class="text-danger small">Это действие нельзя отменить.</p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                    <button type="submit" class="btn btn-danger">Удалить</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+{{ super() }} <script>
+document.addEventListener('DOMContentLoaded', function () {
+    const editModal = document.getElementById('editPersonModal');
+    const deleteModal = document.getElementById('deletePersonModal');
+
+    // Listener для модального окна Создания/Редактирования
+    if (editModal) {
+        const form = editModal.querySelector('form');
+        const title = editModal.querySelector('.modal-title');
+
+        editModal.addEventListener('show.bs.modal', function (event) {
+            const button = event.relatedTarget;
+            const personId = button.getAttribute('data-person-id');
+
+            // Полностью очищаем форму перед использованием
+            form.reset();
+            form.querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = false);
+            form.querySelector('#user_id').value = '';
+
+            // --- Сценарий 1: СОЗДАНИЕ нового ответственного ---
+            if (personId === 'new') {
+                title.textContent = 'Добавить ответственного';
+                form.action = "{{ url_for('main.create_responsible_person') }}";
+                form.querySelector('#person_id').value = '';
+            }
+            // --- Сценарий 2: РЕДАКТИРОВАНИЕ существующего ---
+            else {
+                title.textContent = 'Редактировать ответственного';
+                form.action = `/client-service/responsible/${personId}/update`;
+
+                // Заполняем основные поля
+                form.querySelector('#person_id').value = personId;
+                form.querySelector('#full_name').value = button.getAttribute('data-full-name');
+                form.querySelector('#email').value = button.getAttribute('data-email');
+
+                // Отмечаем нужные чекбоксы для Типов Заявок
+                try {
+                    const appTypes = JSON.parse(button.getAttribute('data-app-types') || '[]');
+                    appTypes.forEach(type => {
+                        const checkbox = form.querySelector(`input[name="application_types"][value="${type}"]`);
+                        if (checkbox) checkbox.checked = true;
+                    });
+                } catch (e) {
+                    console.error("Ошибка чтения JSON для типов заявок:", e);
+                }
+
+                // Отмечаем нужные чекбоксы для ЖК
+                try {
+                    const complexes = JSON.parse(button.getAttribute('data-complexes') || '[]');
+                    complexes.forEach(name => {
+                        const checkbox = form.querySelector(`input[name="assigned_complexes"][value="${name}"]`);
+                        if (checkbox) checkbox.checked = true;
+                    });
+                } catch(e) {
+                    console.error("Ошибка чтения JSON для ЖК:", e);
+                }
+
+                // Выбираем привязанного пользователя в выпадающем списке
+                const userId = button.getAttribute('data-user-id');
+                if (userId && userId !== 'None') {
+                    form.querySelector('#user_id').value = userId;
+                }
+            }
+        });
+    }
+
+    // Listener для модального окна Удаления
+    if (deleteModal) {
+        deleteModal.addEventListener('show.bs.modal', function(event) {
+            const button = event.relatedTarget;
+            const personId = button.getAttribute('data-person-id');
+            const personName = button.getAttribute('data-person-name');
+            const deleteForm = deleteModal.querySelector('form');
+            deleteForm.action = `/client-service/responsible/${personId}/delete`;
+            const nameSpan = deleteModal.querySelector('#personNameToDelete');
+            nameSpan.textContent = personName;
+        });
+    }
+
+    // Анимация для строк таблицы
+    const rows = document.querySelectorAll('tbody tr');
+    rows.forEach((row, index) => {
+        row.style.animationDelay = `${index * 0.05}s`;
+        row.classList.add('animated-row');
+    });
+});
+</script>
+{% endblock %}
