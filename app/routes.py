@@ -243,14 +243,14 @@ def export_applications():
     if overdue == 'yes':
         query = query.filter(
             Application.due_date.isnot(None),
-            Application.due_date < datetime.utcnow(),
+            Application.due_date < datetime.now(),
             Application.completed_at.is_(None)
         )
     elif overdue == 'no':
         query = query.filter(
             or_(
                 Application.due_date.is_(None),
-                Application.due_date >= datetime.utcnow(),
+                Application.due_date >= datetime.now(),
                 Application.completed_at.isnot(None)
             )
         )
@@ -475,7 +475,7 @@ def applications():
         # Только просроченные
         query = query.filter(
             Application.due_date.isnot(None),
-            Application.due_date < datetime.utcnow(),
+            Application.due_date < datetime.now(),
             Application.completed_at.is_(None)
         )
     elif overdue == 'no':
@@ -483,7 +483,7 @@ def applications():
         query = query.filter(
             or_(
                 Application.due_date.is_(None),
-                Application.due_date >= datetime.utcnow(),
+                Application.due_date >= datetime.now(),
                 Application.completed_at.isnot(None)
             )
         )
@@ -544,7 +544,7 @@ def create_application(client_id):
     due_date = None
     if app_type and app_type.execution_days:
         from datetime import timedelta
-        due_date = datetime.utcnow() + timedelta(days=app_type.execution_days)
+        due_date = datetime.now() + timedelta(days=app_type.execution_days)
 
     new_app = Application(client_id=client_id, agreement_number=agreement_number,
                           application_type=application_type_name,
@@ -685,7 +685,7 @@ def create_general_application():
     due_date = None
     if app_type and app_type.execution_days:
         from datetime import timedelta
-        due_date = datetime.utcnow() + timedelta(days=app_type.execution_days)
+        due_date = datetime.now() + timedelta(days=app_type.execution_days)
 
     # Создаем заявку с системным клиентом и договором
     new_app = Application(
@@ -878,12 +878,12 @@ def update_application_status(app_id):
     old_status = app.status
     app.status = new_status
     # Обновляем временной штамп последнего изменения статуса
-    app.last_status_change = datetime.utcnow()
+    app.last_status_change = datetime.now()
     
     # Устанавливаем дату завершения, если статус финальный
     if new_status in ['Выполнено', 'Закрыто', 'Отклонено']:
         if not app.completed_at:
-            app.completed_at = datetime.utcnow()
+            app.completed_at = datetime.now()
     elif old_status in ['Выполнено', 'Закрыто', 'Отклонено'] and new_status not in ['Выполнено', 'Закрыто', 'Отклонено']:
         # Если возвращаем в работу, убираем дату завершения
         app.completed_at = None
@@ -1479,5 +1479,6 @@ def delete_application(app_id):
 
     # Перенаправляем пользователя обратно на страницу со списком заявок
     return redirect(url_for('main.applications'))
+
 
 

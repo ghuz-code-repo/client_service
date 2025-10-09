@@ -59,7 +59,7 @@ def generate_and_send_email(application_id):
         context = {
             'fio_otvetstvenni': responsible.full_name if responsible else 'Не назначен',
             'request_id': app_obj.id,
-            'today_date': datetime.utcnow().strftime('%d.%m.%Y'),
+            'today_date': datetime.now().strftime('%d.%m.%Y'),
             'agreement_number': app_obj.agreement_number,
             'client_fio': client.contacts_buy_name,
             'complex_name': sell.house.complex_name if sell and sell.house else 'N/A',
@@ -123,3 +123,4 @@ def generate_and_send_email(application_id):
         # в фоновом потоке в routes.py
         db.session.add(log_entry)
         db.session.commit()
+

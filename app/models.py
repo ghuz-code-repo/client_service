@@ -70,14 +70,14 @@ class Application(db.Model):
     comment = db.Column(db.Text, nullable=False)
     status = db.Column(db.String(50), nullable=False, default='В работе')
     responsible_person_id = db.Column(db.Integer, db.ForeignKey('responsible_persons.id'), nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=datetime.datetime.now)
     # НОВЫЕ ПОЛЯ: даты для отслеживания сроков
     due_date = db.Column(db.DateTime, nullable=True)  # Срок выполнения заявки
     completed_at = db.Column(db.DateTime, nullable=True)  # Дата фактического завершения
     # НОВОЕ ПОЛЕ: источник заявки
     source = db.Column(db.String(100), nullable=True, default='Звонок')  # Источник заявки
     # НОВОЕ ПОЛЕ: временной штамп последнего изменения статуса
-    last_status_change = db.Column(db.DateTime, nullable=True, default=datetime.datetime.utcnow)
+    last_status_change = db.Column(db.DateTime, nullable=True, default=datetime.datetime.now)
     defects = db.relationship('Defect', backref='application', lazy=True, cascade="all, delete-orphan")
     logs = db.relationship('ApplicationLog', backref='application', lazy=True, cascade="all, delete-orphan")
     # НОВАЯ СВЯЗЬ: объект создателя заявки
@@ -87,7 +87,7 @@ class Application(db.Model):
     def is_overdue(self):
         """Проверка, просрочена ли заявка"""
         if self.due_date and not self.completed_at:
-            return datetime.datetime.utcnow() > self.due_date
+            return datetime.datetime.now() > self.due_date
         return False
 
 class EstateSells(db.Model):
@@ -142,7 +142,7 @@ class ApplicationLog(db.Model):
     __tablename__ = 'application_logs'
     id = db.Column(db.Integer, primary_key=True)
     application_id = db.Column(db.Integer, db.ForeignKey('applications.id'), nullable=False)
-    timestamp = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+    timestamp = db.Column(db.DateTime, default=datetime.datetime.now)
     action = db.Column(db.String(255), nullable=False)
     comment = db.Column(db.Text)
     # НОВОЕ ПОЛЕ: автор изменения
@@ -181,7 +181,7 @@ class EmailLog(db.Model):
     __tablename__ = 'email_logs'
     id = db.Column(db.Integer, primary_key=True)
     application_id = db.Column(db.Integer, db.ForeignKey('applications.id'), nullable=True)
-    timestamp = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+    timestamp = db.Column(db.DateTime, default=datetime.datetime.now)
     recipient = db.Column(db.String(255))
     subject = db.Column(db.String(255))
     status = db.Column(db.String(50))
@@ -208,3 +208,4 @@ class ApplicationType(db.Model):
 
     def __repr__(self):
         return f'<ApplicationType {self.name}>'
+
