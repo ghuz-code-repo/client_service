@@ -28,14 +28,30 @@ def background_sync_task(app_context):
     sync_interval_seconds = sync_interval_hours * 3600
 
     while True:
-        # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
-        # Сначала ждем указанный интервал.
-        print(f"\nСледующая фоновая синхронизация запланирована через {sync_interval_hours} часа(ов)...")
+        # Сначала ждем указанный интервал
+        from datetime import datetime, timedelta
+        next_sync_time = datetime.now() + timedelta(hours=sync_interval_hours)
+        print(f"\n{'='*70}")
+        print(f"📅 СЛЕДУЮЩАЯ ФОНОВАЯ СИНХРОНИЗАЦИЯ ЗАПЛАНИРОВАНА:")
+        print(f"   Через: {sync_interval_hours} часа(ов)")
+        print(f"   Время: {next_sync_time.strftime('%d.%m.%Y %H:%M:%S')}")
+        print(f"{'='*70}\n")
+        
         time.sleep(sync_interval_seconds)
 
-        # Затем выполняем синхронизацию.
+        # Затем выполняем синхронизацию
+        print(f"\n{'='*70}")
+        print(f"🔄 ЗАПУСК ФОНОВОЙ СИНХРОНИЗАЦИИ")
+        print(f"   Время: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}")
+        print(f"{'='*70}\n")
+        
         with app_context:
             sync_data()
+        
+        print(f"\n{'='*70}")
+        print(f"✅ ФОНОВАЯ СИНХРОНИЗАЦИЯ ЗАВЕРШЕНА")
+        print(f"   Время: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}")
+        print(f"{'='*70}\n")
 
 # behind_proxy = os.getenv('BEHIND_PROXY', 'false').lower() == 'true'
 # prefix = '/client-service' if behind_proxy else ''
@@ -83,5 +99,5 @@ if __name__ == '__main__':
     # 4. Запускаем веб-приложение Flask
     print("\nЗапуск веб-приложения Flask...")
     # Для production используйте Gunicorn или другой WSGI-сервер
-    # debug=True и use_reloader=True не должны использоваться в production
-    app.run(host='0.0.0.0', port=80, debug=app.config.get('DEBUG', True), use_reloader=True)
+    # use_reloader=False чтобы избежать двойного запуска синхронизации
+    app.run(host='0.0.0.0', port=80, debug=app.config.get('DEBUG', True), use_reloader=False)

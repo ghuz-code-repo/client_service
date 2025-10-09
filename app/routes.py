@@ -7,6 +7,7 @@ import os
 from datetime import datetime
 from threading import Thread
 from openpyxl import load_workbook, Workbook
+from openpyxl.cell import MergedCell
 from openpyxl.styles import Font, Alignment
 from flask import (render_template, request, Blueprint, abort, flash, redirect,
                    url_for, jsonify, current_app, send_file)
@@ -379,11 +380,14 @@ def export_applications():
     # Автоматическая настройка ширины колонок
     for col in ws.columns:
         max_length = 0
-        column = col[0].column_letter
+        # Получаем букву колонки из строки заголовков (3-я строка, индекс 2),
+        # чтобы избежать ошибки с объединенной ячейкой в первой строке.
+        column = col[2].column_letter
         for cell in col:
             try:
-                if len(str(cell.value)) > max_length:
-                    max_length = len(str(cell.value))
+                if cell.value:  # Проверяем, что ячейка не пустая
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
             except:
                 pass
         adjusted_width = min(max_length + 2, 50)
@@ -586,19 +590,61 @@ def create_application(client_id):
     return redirect(url_for('main.client_card', client_id=client_id))
 
 
+def get_or_create_system_client():
+    """
+    Получает системного клиента или создает его, если он не существует.
+    Также создает системный договор, если его нет.
+    """
+    system_client = EstateDealsContacts.query.filter_by(
+        contacts_buy_name="СИСТЕМНЫЙ КЛИЕНТ (для заявок без договора)"
+    ).first()
+    
+    if not system_client:
+        print("INFO: Системный клиент не найден. Создаем автоматически...")
+        system_client = EstateDealsContacts(
+            contacts_buy_name="СИСТЕМНЫЙ КЛИЕНТ (для заявок без договора)",
+            contacts_buy_phones="000-00-00"
+        )
+        db.session.add(system_client)
+        db.session.flush()  # Чтобы получить ID
+        print(f"INFO: Создан системный клиент с ID: {system_client.id}")
+        
+        # Проверяем и создаем системный договор
+        system_deal = EstateDeals.query.filter_by(
+            agreement_number="SYSTEM-001",
+            contacts_buy_id=system_client.id
+        ).first()
+        
+        if not system_deal:
+            from datetime import date
+            system_deal = EstateDeals(
+                agreement_number="SYSTEM-001",
+                contacts_buy_id=system_client.id,
+                deal_status_name="Системный",
+                agreement_date=date.today(),
+                deal_sum=0.0,
+                finances_income_reserved=0.0
+            )
+            db.session.add(system_deal)
+            print("INFO: Создан системный договор SYSTEM-001")
+        
+        db.session.commit()
+    
+    return system_client
+
+
 @main.route('/client-service/application/create-general', methods=['POST'])
 @login_required
 def create_general_application():
     """Создание заявки без привязки к клиенту (через системного клиента)"""
     form_data = request.form
     
-    # Получаем системного клиента
-    system_client = EstateDealsContacts.query.filter_by(
-        contacts_buy_name="СИСТЕМНЫЙ КЛИЕНТ (для заявок без договора)"
-    ).first()
-    
-    if not system_client:
-        flash('Системный клиент не найден. Обратитесь к администратору.', 'danger')
+    # Получаем или создаем системного клиента автоматически
+    try:
+        system_client = get_or_create_system_client()
+    except Exception as e:
+        print(f"ERROR: Не удалось получить/создать системного клиента: {e}")
+        flash(f'Произошла ошибка при работе с системным клиентом: {e}', 'danger')
         return redirect(url_for('main.index'))
     
     # Получаем данные из формы
@@ -959,14 +1005,17 @@ def download_report():
 
     for col in ws.columns:
         max_length = 0
-        column = col[0].column_letter
+        # Получаем букву колонки из строки заголовков (3-я строка, индекс 2),
+        # чтобы избежать ошибки с объединенной ячейкой в первой строке.
+        column = col[2].column_letter
         for cell in col:
             try:
-                if len(str(cell.value)) > max_length:
-                    max_length = len(cell.value)
+                if cell.value:  # Проверяем, что ячейка не пустая
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
             except:
                 pass
-        adjusted_width = (max_length + 2)
+        adjusted_width = min(max_length + 2, 50)
         ws.column_dimensions[column].width = adjusted_width
 
     buffer = io.BytesIO()

@@ -49,6 +49,13 @@ def generate_and_send_email(application_id):
         deal = EstateDeals.query.filter_by(agreement_number=app_obj.agreement_number, contacts_buy_id=client.id).first()
         sell = deal.sell if deal else None
 
+        # Подготовка списка дефектов
+        defects_list = [{'defect_type': d.defect_type, 'comment': d.description} for d in app_obj.defects]
+        
+        # Для обратной совместимости со старыми шаблонами добавляем первый дефект как 'defect'
+        # и флаг наличия дефектов
+        first_defect = defects_list[0] if defects_list else {'defect_type': '', 'comment': ''}
+        
         context = {
             'fio_otvetstvenni': responsible.full_name if responsible else 'Не назначен',
             'request_id': app_obj.id,
@@ -61,16 +68,32 @@ def generate_and_send_email(application_id):
             'flat_num': sell.geo_flatnum if sell else 'N/A',
             'comment': app_obj.comment,
             'client_phone_number': client.contacts_buy_phones,
-            'defects': [{'defect_type': d.defect_type, 'comment': d.description} for d in app_obj.defects]
+            'defects': defects_list,
+            # Для обратной совместимости со старыми шаблонами:
+            'defect': first_defect,  # Первый дефект (или пустой объект)
+            'has_defects': len(defects_list) > 0,  # Флаг наличия дефектов
+            'defects_count': len(defects_list)  # Количество дефектов
         }
 
         subject_str = f'Новая заявка: {app_obj.application_type} №{app_obj.id}'
 
-        doc = DocxTemplate(template_path)
-        doc.render(context)
-        doc_io = io.BytesIO()
-        doc.save(doc_io)
-        doc_io.seek(0)
+        try:
+            doc = DocxTemplate(template_path)
+            print(f"DEBUG: Рендерим шаблон {template_filename} для заявки #{application_id}")
+            print(f"DEBUG: Количество дефектов: {len(context['defects'])}")
+            print(f"DEBUG: Контекст содержит ключи: {list(context.keys())}")
+            if context['defects']:
+                print(f"DEBUG: Первый дефект: {context['defect']}")
+            doc.render(context)
+            doc_io = io.BytesIO()
+            doc.save(doc_io)
+            doc_io.seek(0)
+            print(f"SUCCESS: Шаблон {template_filename} успешно отрендерен")
+        except Exception as render_error:
+            error_msg = f"Ошибка при рендеринге шаблона {template_filename}: {render_error}"
+            print(f"ERROR: {error_msg}")
+            print(f"ERROR: Контекст на момент ошибки: {list(context.keys())}")
+            raise ValueError(error_msg)
 
         # Используем стандартный способ создания сообщения
         msg = Message(subject=subject_str,

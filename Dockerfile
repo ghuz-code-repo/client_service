@@ -2,6 +2,11 @@
 # Use an official Python runtime as a parent image
 FROM python:3.12-slim
 
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    tzdata \
+    && rm -rf /var/lib/apt/lists/*
+
 ENV TZ=Asia/Tashkent
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
