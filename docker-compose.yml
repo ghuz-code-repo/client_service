@@ -4,8 +4,8 @@ services:
     image: client-service-service
     container_name: client-service-service
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: client_service/Dockerfile
     labels:
       - "nginx.auth=false"
     volumes:
@@ -15,13 +15,15 @@ services:
     env_file:
       - .env
     networks:
-      - service_network
-      - public_network
+      - service_network     # Только внутренняя сеть сервисов
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:80/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
 
 networks:
   service_network:
     external: true
     name: service_network
-  public_network:
-    external: true
-    name: public_network

@@ -26,6 +26,13 @@ from sqlalchemy import or_
 
 main = Blueprint('main', __name__)
 
+
+@main.route('/health')
+def health():
+    """Health check endpoint for Docker health checks."""
+    return {'status': 'ok', 'service': 'client-service'}, 200
+
+
 def send_email_async(app, application_id):
     """
     Функция-обертка для запуска отправки email в отдельном потоке
@@ -76,7 +83,7 @@ class SQLPagination:
                 last = num
 
 
-@main.route('/client-service/')
+@main.route('/')
 @login_required
 def index():
     page = request.args.get('page', 1, type=int)
@@ -150,7 +157,7 @@ def index():
                          responsible_persons=responsible_persons)
 
 
-@main.route('/client-service/client/<int:client_id>')
+@main.route('/client/<int:client_id>')
 @login_required
 def client_card(client_id):
     contact = EstateDealsContacts.query.get_or_404(client_id)
@@ -185,7 +192,7 @@ def client_card(client_id):
                            warranty_info=warranty_info,
                            current_date=current_date)
 
-@main.route('/client-service/export-applications')
+@main.route('/export-applications')
 @login_required
 def export_applications():
     """Экспорт заявок в Excel с учетом всех фильтров"""
@@ -406,7 +413,7 @@ def export_applications():
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
-@main.route('/client-service/applications')
+@main.route('/applications')
 @login_required
 def applications():
     page = request.args.get('page', 1, type=int)
@@ -516,7 +523,7 @@ def applications():
                          applications=apps_paginated,
                          application_types=application_types)
 
-@main.route('/client-service/client/<int:client_id>/application/create', methods=['POST'])
+@main.route('/client/<int:client_id>/application/create', methods=['POST'])
 @login_required
 def create_application(client_id):
     contact = EstateDealsContacts.query.get_or_404(client_id)
@@ -633,7 +640,7 @@ def get_or_create_system_client():
     return system_client
 
 
-@main.route('/client-service/application/create-general', methods=['POST'])
+@main.route('/application/create-general', methods=['POST'])
 @login_required
 def create_general_application():
     """Создание заявки без привязки к клиенту (через системного клиента)"""
@@ -743,7 +750,7 @@ def create_general_application():
     return redirect(url_for('main.applications'))
 
 
-@main.route('/client-service/responsible')
+@main.route('/responsible')
 @login_required
 @permission_required('Админ')
 def responsible_persons():
@@ -761,7 +768,7 @@ def responsible_persons():
                            all_application_types=all_application_types,all_users=all_users)
 
 
-@main.route('/client-service/responsible', methods=['POST'])
+@main.route('/responsible', methods=['POST'])
 @login_required
 @permission_required('Админ')
 def create_responsible_person():
@@ -788,7 +795,7 @@ def create_responsible_person():
     return redirect(url_for('main.responsible_persons'))
 
 
-@main.route('/client-service/responsible/<int:person_id>/update', methods=['POST'])
+@main.route('/responsible/<int:person_id>/update', methods=['POST'])
 @login_required
 @permission_required('Админ')
 def update_responsible_person(person_id):
@@ -816,7 +823,7 @@ def update_responsible_person(person_id):
     return redirect(url_for('main.responsible_persons'))
 
 
-@main.route('/client-service/responsible/<int:person_id>/delete', methods=['POST'])
+@main.route('/responsible/<int:person_id>/delete', methods=['POST'])
 @login_required
 @permission_required('Админ')
 def delete_responsible_person(person_id):
@@ -832,7 +839,7 @@ def delete_responsible_person(person_id):
     return redirect(url_for('main.responsible_persons'))
 
 
-@main.route('/client-service/api/responsible')
+@main.route('/api/responsible')
 @login_required
 def get_responsible_persons():
     complex_name, app_type = request.args.get('complex_name'), request.args.get('application_type')
@@ -855,7 +862,7 @@ def get_responsible_persons():
     return jsonify([{'id': p['id'], 'name': p['full_name'], 'email': p['email']} for p in final_persons])
 
 
-@main.route('/client-service/application/<int:app_id>/update_status', methods=['POST'])
+@main.route('/application/<int:app_id>/update_status', methods=['POST'])
 @login_required
 @permission_required('Специалист КЦ', 'Менеджер ДКС', 'Менеджер отдела оформления', 'Менеджер ОГР', 'Админ')
 def update_application_status(app_id):
@@ -900,7 +907,7 @@ def update_application_status(app_id):
     return redirect(url_for('main.client_card', client_id=app.client_id))
 
 
-@main.route('/client-service/api/application/<int:app_id>/logs')
+@main.route('/api/application/<int:app_id>/logs')
 @login_required
 def get_application_logs(app_id):
     Application.query.get_or_404(app_id)
@@ -914,14 +921,14 @@ def get_application_logs(app_id):
           'author': log.author.username if log.author else 'Система'} for log in logs])
 
 
-@main.route('/client-service/reports')
+@main.route('/reports')
 @login_required
 @permission_required('Админ')
 def reports():
     return render_template('reports.html')
 
 
-@main.route('/client-service/reports/download', methods=['POST'])
+@main.route('/reports/download', methods=['POST'])
 @login_required
 @permission_required('Специалист КЦ', 'Менеджер ДКС', 'Админ')
 def download_report():
@@ -1026,7 +1033,7 @@ def download_report():
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
-@main.route('/client-service/reports/download-completed', methods=['POST'])
+@main.route('/reports/download-completed', methods=['POST'])
 @login_required
 @permission_required('Специалист КЦ', 'Менеджер ДКС', 'Админ')
 def download_completed_report():
@@ -1157,7 +1164,7 @@ def download_completed_report():
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
-@main.route('/client-service/deadlines/upload', methods=['GET', 'POST'])
+@main.route('/deadlines/upload', methods=['GET', 'POST'])
 @login_required
 @admin_required
 def upload_deadlines():
@@ -1244,7 +1251,7 @@ def upload_deadlines():
     return render_template('upload_deadlines.html')
 
 
-@main.route('/client-service/deadlines/template')
+@main.route('/deadlines/template')
 @login_required
 @admin_required
 def download_deadlines_template():
@@ -1295,7 +1302,7 @@ def download_deadlines_template():
         return redirect(url_for('main.upload_deadlines'))
 
 
-@main.route('/client-service/admin/email-logs')
+@main.route('/admin/email-logs')
 @login_required
 @admin_required
 def email_logs():
@@ -1304,7 +1311,7 @@ def email_logs():
     return render_template('email_logs.html', logs=logs)
 
 
-@main.route('/client-service/admin/defect-types', methods=['GET', 'POST'])
+@main.route('/admin/defect-types', methods=['GET', 'POST'])
 @login_required
 @admin_required
 def manage_defect_types():
@@ -1327,7 +1334,7 @@ def manage_defect_types():
     return render_template('manage_defect_types.html', defect_types=defect_types)
 
 
-@main.route('/client-service/admin/defect-types/<int:type_id>/delete', methods=['POST'])
+@main.route('/admin/defect-types/<int:type_id>/delete', methods=['POST'])
 @login_required
 @admin_required
 def delete_defect_type(type_id):
@@ -1342,7 +1349,7 @@ def delete_defect_type(type_id):
     return redirect(url_for('main.manage_defect_types'))
 
 
-@main.route('/client-service/admin/application-types', methods=['GET', 'POST'])
+@main.route('/admin/application-types', methods=['GET', 'POST'])
 @login_required
 @admin_required
 def manage_application_types():
@@ -1407,7 +1414,7 @@ def manage_application_types():
     return render_template('manage_application_types.html', app_types=app_types, template_tags=template_tags)
 
 
-@main.route('/client-service/admin/application-types/<int:type_id>/download')
+@main.route('/admin/application-types/<int:type_id>/download')
 @login_required
 @admin_required
 def download_application_template(type_id):
@@ -1437,7 +1444,7 @@ def download_application_template(type_id):
     )
 
 
-@main.route('/client-service/admin/application-types/<int:type_id>/delete', methods=['POST'])
+@main.route('/admin/application-types/<int:type_id>/delete', methods=['POST'])
 @login_required
 @admin_required
 def delete_application_type(type_id):
@@ -1457,7 +1464,7 @@ def delete_application_type(type_id):
     return redirect(url_for('main.manage_application_types'))
 
 
-@main.route('/client-service/application/<int:app_id>/delete', methods=['POST'])
+@main.route('/application/<int:app_id>/delete', methods=['POST'])
 @login_required
 @admin_required
 def delete_application(app_id):
