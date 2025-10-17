@@ -13,12 +13,27 @@
 </div>
 
 <div class="card shadow-sm mb-4 animate-on-scroll" style="animation-delay: 0.1s;">
-    <div class="card-header bg-light"><h1 class="card-title h3 mb-0">Карточка клиента</h1></div>
+    <div class="card-header bg-light d-flex justify-content-between align-items-center">
+        <h1 class="card-title h3 mb-0">Карточка клиента</h1>
+        {% if current_user.has_role('Админ') and client_comment is defined %}
+        <button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#editClientCommentModal">
+            <i class="bi bi-pencil"></i> Редактировать комментарий
+        </button>
+        {% endif %}
+    </div>
     <div class="card-body">
         <div class="row">
             <div class="col-md-6"><p><strong>ФИО:</strong><br>{{ client.fio }}</p></div>
             <div class="col-md-6"><p><strong>Телефон:</strong><br>{{ client.phone }}</p></div>
             <div class="col-12"><p><strong>Номера договоров:</strong><br>{% for number in client.agreement_numbers %}<span class="badge bg-secondary fw-normal me-1">{{ number }}</span>{% else %}<span>Нет действующих договоров.</span>{% endfor %}</p></div>
+            {% if client_comment %}
+            <div class="col-12 mt-3">
+                <div class="alert alert-info">
+                    <strong><i class="bi bi-info-circle me-2"></i>Комментарий о клиенте:</strong>
+                    <p class="mb-0 mt-2">{{ client_comment }}</p>
+                </div>
+            </div>
+            {% endif %}
         </div>
     </div>
 </div>
@@ -132,7 +147,9 @@
                         </td>
                         <td class="text-end">
                             {% set is_responsible = current_user.responsible_person_profile and current_user.responsible_person_profile.id == app.responsible_person_id %}
-                            {% if current_user.has_role('Админ') or is_responsible %}
+                            {% set is_no_contract = app.agreement_number and (app.agreement_number.startswith('NC-') or app.agreement_number == 'SYSTEM-001' or client.fio == "СИСТЕМНЫЙ КЛИЕНТ (для заявок без договора)") %}
+                            {% set can_edit = current_user.has_role('Админ') or is_responsible or (is_no_contract and current_user.has_role('Специалист КЦ', 'Менеджер ДКС', 'Менеджер отдела оформления', 'Менеджер ОГР')) %}
+                            {% if can_edit %}
                             <button class="btn btn-sm btn-outline-dark" data-bs-toggle="modal" data-bs-target="#editStatusModal" data-app-id="{{ app.id }}" data-app-status="{{ app.status }}">
                                 <i class="bi bi-pencil-square"></i> Редактировать
                             </button>
@@ -250,6 +267,33 @@
     </div>
   </div>
 </div>
+
+<!-- Модальное окно редактирования комментария клиента -->
+{% if current_user.has_role('Админ') %}
+<div class="modal fade" id="editClientCommentModal" tabindex="-1" aria-labelledby="editClientCommentModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="editClientCommentModalLabel">Редактировать комментарий клиента</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <form action="{{ url_for('main.update_client_comment', client_id=client.id) }}" method="post">
+        <div class="modal-body">
+          <div class="form-floating">
+            <textarea class="form-control" id="client_comment" name="client_comment" placeholder="Комментарий о клиенте" style="height: 150px">{{ client_comment if client_comment else '' }}</textarea>
+            <label for="client_comment">Комментарий о клиенте</label>
+          </div>
+          <small class="form-text text-muted mt-2 d-block">Здесь можно указать название компании, дополнительные контакты, особые пожелания и т.д.</small>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+          <button type="submit" class="btn btn-primary">Сохранить</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}
 {% endblock %}
 
 {% block scripts %}

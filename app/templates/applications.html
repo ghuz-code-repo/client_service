@@ -129,27 +129,17 @@
                         </td>
                         <td>
                             {% if app.client %}
-                                {% if app.client.contacts_buy_name == 'СИСТЕМНЫЙ КЛИЕНТ (для заявок без договора)' %}
-                                    <span class="badge bg-info text-dark">Без клиента</span>
-                                    {% if app.comment and ('ФИО:' in app.comment or 'Телефон:' in app.comment) %}
-                                        <br>
-                                        <small class="text-muted">
-                                            {% set comment_lines = app.comment.split('\n') %}
-                                            {% if comment_lines|length > 0 and 'Контактные данные:' in comment_lines[0] %}
-                                                {{ comment_lines[0].replace('Контактные данные: ', '') }}
-                                            {% endif %}
-                                        </small>
-                                    {% endif %}
-                                {% else %}
-                                    <a href="{{ url_for('main.client_card', client_id=app.client_id) }}">{{ app.client.contacts_buy_name }}</a>
+                                <a href="{{ url_for('main.client_card', client_id=app.client_id) }}">{{ app.client.contacts_buy_name }}</a>
+                                {% if app.agreement_number and app.agreement_number.startswith('NC-') %}
+                                    <br><span class="badge bg-warning text-dark">Без договора</span>
                                 {% endif %}
                             {% else %}
                                 <span class="text-muted">N/A</span>
                             {% endif %}
                         </td>
                         <td>
-                            {% if app.agreement_number == 'SYSTEM-001' %}
-                                <span class="badge bg-secondary">Без договора</span>
+                            {% if app.agreement_number and (app.agreement_number.startswith('NC-') or app.agreement_number == 'SYSTEM-001') %}
+                                <span class="badge bg-secondary">{{ app.agreement_number }}</span>
                             {% else %}
                                 {{ app.agreement_number }}
                             {% endif %}

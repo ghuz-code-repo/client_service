@@ -45,9 +45,34 @@ def sync_data():
 
                 for model in models_to_clear:
                     table_name = model.__tablename__
-                    print(f"   - Очистка таблицы {table_name} с помощью прямого SQL-запроса...")
-                    # Заменяем ORM-метод на прямой SQL-запрос в той же транзакции
-                    con.execute(db.text(f'DELETE FROM {table_name}'))
+                    
+                    # ИСПРАВЛЕНИЕ: Для клиентов НЕ удаляем тех, кто создан локально для заявок без договора
+                    if table_name == 'estate_deals_contacts':
+                        print(f"   - Очистка таблицы {table_name} (сохраняя локальных клиентов)...")
+                        # Удаляем только тех клиентов, у которых НЕТ договоров с префиксом NC- или SYSTEM-001
+                        # Это сохранит клиентов, созданных локально для заявок без договора
+                        con.execute(db.text('''
+                            DELETE FROM estate_deals_contacts 
+                            WHERE id NOT IN (
+                                SELECT DISTINCT contacts_buy_id 
+                                FROM estate_deals 
+                                WHERE agreement_number LIKE 'NC-%' 
+                                   OR agreement_number = 'SYSTEM-001'
+                            )
+                        '''))
+                        print("   - Локальные клиенты (с договорами NC-* и SYSTEM-001) сохранены.")
+                    elif table_name == 'estate_deals':
+                        print(f"   - Очистка таблицы {table_name} (сохраняя договоры без договора)...")
+                        # Удаляем только договоры, которые НЕ являются локальными (NC-* и SYSTEM-001)
+                        con.execute(db.text('''
+                            DELETE FROM estate_deals 
+                            WHERE agreement_number NOT LIKE 'NC-%' 
+                              AND agreement_number != 'SYSTEM-001'
+                        '''))
+                        print("   - Локальные договоры (NC-* и SYSTEM-001) сохранены.")
+                    else:
+                        print(f"   - Очистка таблицы {table_name} с помощью прямого SQL-запроса...")
+                        con.execute(db.text(f'DELETE FROM {table_name}'))
 
                 print("   - Включаем проверку ключей обратно.")
                 con.execute(db.text('PRAGMA foreign_keys = ON'))
@@ -92,6 +117,13 @@ def sync_data():
                     # чтобы избежать дубликатов из-за lazy='joined' в модели.
                     chunk_query = db.select(model).options(noload(model.deals)).limit(CHUNK_SIZE).offset(offset)
                 # --- КОНЕЦ ИЗМЕНЕНИЯ ---
+                elif model == EstateDealsContacts:
+                    # Для EstateDealsContacts исключаем поле client_comment, которого нет в удаленной БД
+                    chunk_query = db.select(
+                        model.id,
+                        model.contacts_buy_name,
+                        model.contacts_buy_phones
+                    ).limit(CHUNK_SIZE).offset(offset)
                 elif model == EstateDeals:
                     # Для EstateDeals принудительно соединяем с родительскими таблицами,
                     # чтобы отфильтровать "осиротевшие" записи в источнике и избежать ошибок FOREIGN KEY.
@@ -115,8 +147,37 @@ def sync_data():
                 if not chunk:
                     break
 
+                # ИСПРАВЛЕНИЕ: Для клиентов и договоров фильтруем локальные данные
+                if model == EstateDealsContacts:
+                    # Получаем ID локальных клиентов (с договорами NC-* или SYSTEM-001)
+                    local_client_ids = local_session.execute(db.text('''
+                        SELECT DISTINCT contacts_buy_id 
+                        FROM estate_deals 
+                        WHERE agreement_number LIKE 'NC-%' 
+                           OR agreement_number = 'SYSTEM-001'
+                    ''')).fetchall()
+                    local_client_ids_set = {row[0] for row in local_client_ids}
+                    
+                    # Фильтруем chunk - исключаем локальных клиентов
+                    chunk = [record for record in chunk if record['id'] not in local_client_ids_set]
+                    
+                    if local_client_ids_set:
+                        print(f"    - Исключено {len(local_client_ids_set)} локальных клиентов из синхронизации.")
+                
+                elif model == EstateDeals:
+                    # Для договоров исключаем NC-* и SYSTEM-001 (они не должны приходить из MacroCRM)
+                    # Но на всякий случай фильтруем
+                    original_count = len(chunk)
+                    chunk = [record for record in chunk 
+                            if not (record.get('agreement_number', '').startswith('NC-') or 
+                                   record.get('agreement_number') == 'SYSTEM-001')]
+                    filtered_count = original_count - len(chunk)
+                    if filtered_count > 0:
+                        print(f"    - Исключено {filtered_count} локальных договоров из синхронизации.")
+
                 # Сразу записываем полученную порцию в локальную БД
-                local_session.bulk_insert_mappings(model, chunk)
+                if chunk:  # Проверяем, что chunk не пустой после фильтрации
+                    local_session.bulk_insert_mappings(model, chunk)
 
                 chunk_size = len(chunk)
                 model_records_synced += chunk_size

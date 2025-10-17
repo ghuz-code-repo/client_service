@@ -119,6 +119,8 @@ class EstateDealsContacts(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     contacts_buy_name = db.Column(db.String(255))
     contacts_buy_phones = db.Column(db.String(255))
+    # НОВОЕ ПОЛЕ: комментарий к клиенту (для описания компании, ответственных и т.д.)
+    client_comment = db.Column(db.Text, nullable=True)
     deals = db.relationship('EstateDeals', backref='contact', lazy='dynamic')
     applications = db.relationship('Application', backref='client', lazy='dynamic')
 

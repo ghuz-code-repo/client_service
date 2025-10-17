@@ -183,7 +183,8 @@ def client_card(client_id):
                            application_types=application_types,
                            application_statuses=application_statuses,
                            warranty_info=warranty_info,
-                           current_date=current_date)
+                           current_date=current_date,
+                           client_comment=contact.client_comment)
 
 @main.route('/client-service/export-applications')
 @login_required
@@ -636,16 +637,8 @@ def get_or_create_system_client():
 @main.route('/client-service/application/create-general', methods=['POST'])
 @login_required
 def create_general_application():
-    """Создание заявки без привязки к клиенту (через системного клиента)"""
+    """Создание заявки без договора - создает нового клиента"""
     form_data = request.form
-    
-    # Получаем или создаем системного клиента автоматически
-    try:
-        system_client = get_or_create_system_client()
-    except Exception as e:
-        print(f"ERROR: Не удалось получить/создать системного клиента: {e}")
-        flash(f'Произошла ошибка при работе с системным клиентом: {e}', 'danger')
-        return redirect(url_for('main.index'))
     
     # Получаем данные из формы
     application_type_name = form_data.get('application_type')
@@ -653,6 +646,7 @@ def create_general_application():
     responsible_person_id = form_data.get('responsible_person_id')
     contact_name = form_data.get('contact_name', '').strip()
     contact_phone = form_data.get('contact_phone', '').strip()
+    client_comment = form_data.get('client_comment', '').strip()
     
     # Получаем источник заявки
     source = form_data.get('source', 'Звонок')
@@ -662,21 +656,27 @@ def create_general_application():
             source = custom_source
 
     # Проверяем обязательные поля
-    if not all([application_type_name, comment, responsible_person_id]):
-        flash('Тип заявки, комментарий и ответственный являются обязательными полями.', 'danger')
+    if not all([application_type_name, comment, responsible_person_id, contact_name, contact_phone]):
+        flash('Все поля (ФИО клиента, телефон, тип заявки, комментарий и ответственный) являются обязательными.', 'danger')
         return redirect(url_for('main.index'))
 
-    # Добавляем информацию о контакте в комментарий, если она указана
-    enhanced_comment = comment
-    if contact_name or contact_phone:
-        enhanced_comment = f"Контактные данные: "
-        if contact_name:
-            enhanced_comment += f"ФИО: {contact_name}"
-        if contact_phone:
-            if contact_name:
-                enhanced_comment += ", "
-            enhanced_comment += f"Телефон: {contact_phone}"
-        enhanced_comment += f"\n\n{comment}"
+    # Создаем нового клиента для заявки без договора
+    try:
+        new_client = EstateDealsContacts(
+            contacts_buy_name=contact_name,
+            contacts_buy_phones=contact_phone,
+            client_comment=client_comment if client_comment else None
+        )
+        db.session.add(new_client)
+        db.session.flush()  # Получаем ID клиента
+        
+        print(f"INFO: Создан новый клиент (без договора): ID={new_client.id}, ФИО={contact_name}")
+        
+    except Exception as e:
+        db.session.rollback()
+        print(f"ERROR: Не удалось создать клиента: {e}")
+        flash(f'Произошла ошибка при создании клиента: {e}', 'danger')
+        return redirect(url_for('main.index'))
 
     # Получаем тип заявки для определения срока выполнения
     app_type = ApplicationType.query.filter_by(name=application_type_name).first()
@@ -687,18 +687,43 @@ def create_general_application():
         from datetime import timedelta
         due_date = datetime.now() + timedelta(days=app_type.execution_days)
 
-    # Создаем заявку с системным клиентом и договором
+    # Создаем договор "без договора" для нового клиента
+    try:
+        # Генерируем уникальный номер договора
+        agreement_number = f"NC-{new_client.id}"
+        
+        new_deal = EstateDeals(
+            contacts_buy_id=new_client.id,
+            agreement_number=agreement_number,
+            deal_status_name="Без договора",
+            agreement_date=datetime.now().date(),
+            deal_sum=0.0,
+            finances_income_reserved=0.0
+        )
+        db.session.add(new_deal)
+        db.session.flush()
+        
+        print(f"INFO: Создан договор 'без договора': {agreement_number}")
+        
+    except Exception as e:
+        db.session.rollback()
+        print(f"ERROR: Не удалось создать договор: {e}")
+        flash(f'Произошла ошибка при создании договора: {e}', 'danger')
+        return redirect(url_for('main.index'))
+
+    # Создаем заявку с новым клиентом и договором
     new_app = Application(
-        client_id=system_client.id, 
-        agreement_number="SYSTEM-001",  # Системный договор
+        client_id=new_client.id, 
+        agreement_number=agreement_number,
         application_type=application_type_name,
-        comment=enhanced_comment, 
+        comment=comment, 
         responsible_person_id=responsible_person_id,
         creator_id=current_user.id, 
         due_date=due_date, 
         source=source
     )
     db.session.add(new_app)
+    db.session.flush()  # Получаем ID заявки
 
     # Обработка дефектов
     defects_data = {}
@@ -724,8 +749,8 @@ def create_general_application():
     # Добавляем лог
     db.session.add(ApplicationLog(
         application=new_app, 
-        action="Заявка создана (без привязки к клиенту)",
-        comment=f"Назначен ответственный: {ResponsiblePerson.query.get(responsible_person_id).full_name}",
+        action="Заявка создана (без договора)",
+        comment=f"Создан новый клиент: {contact_name}. Назначен ответственный: {ResponsiblePerson.query.get(responsible_person_id).full_name}",
         author_id=current_user.id
     ))
 
@@ -734,13 +759,32 @@ def create_general_application():
         app_instance = current_app._get_current_object()
         thr = Thread(target=send_email_async, args=[app_instance, new_app.id])
         thr.start()
-        flash(f'Заявка №{new_app.id} успешно создана! Уведомление ответственному лицу отправляется.', 'success')
+        flash(f'Заявка №{new_app.id} успешно создана для нового клиента "{contact_name}"! Уведомление ответственному лицу отправляется.', 'success')
 
     except Exception as e:
         db.session.rollback()
         flash(f'Произошла ошибка при сохранении заявки в базу данных: {e}', 'danger')
 
-    return redirect(url_for('main.applications'))
+    return redirect(url_for('main.client_card', client_id=new_client.id))
+
+
+@main.route('/client-service/client/<int:client_id>/update_comment', methods=['POST'])
+@login_required
+@admin_required
+def update_client_comment(client_id):
+    """Обновление комментария клиента (только для админа)"""
+    contact = EstateDealsContacts.query.get_or_404(client_id)
+    new_comment = request.form.get('client_comment', '').strip()
+    
+    try:
+        contact.client_comment = new_comment if new_comment else None
+        db.session.commit()
+        flash('Комментарий клиента успешно обновлён.', 'success')
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Ошибка при обновлении комментария: {e}', 'danger')
+    
+    return redirect(url_for('main.client_card', client_id=client_id))
 
 
 @main.route('/client-service/responsible')
@@ -865,7 +909,14 @@ def update_application_status(app_id):
     is_responsible = (current_user.responsible_person_profile and
                       current_user.responsible_person_profile.id == app.responsible_person_id)
 
-    if not (is_admin or is_responsible):
+    # ИСПРАВЛЕНИЕ: Разрешаем изменение статуса администраторам и ответственным
+    # Для заявок без договора (NC-xxx или старый SYSTEM-001) разрешаем всем пользователям с правами доступа
+    is_no_contract = (app.agreement_number and 
+                      (app.agreement_number.startswith('NC-') or 
+                       app.agreement_number == 'SYSTEM-001' or
+                       app.client.contacts_buy_name == "СИСТЕМНЫЙ КЛИЕНТ (для заявок без договора)"))
+    
+    if not (is_admin or is_responsible or is_no_contract):
         abort(403)  # Forbidden
 
     new_status, comment = request.form.get('status'), request.form.get('comment')

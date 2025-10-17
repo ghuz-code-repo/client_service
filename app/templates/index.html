@@ -11,8 +11,8 @@
                 <h1 class="card-title h3 mb-0">Список клиентов</h1>
                 <p class="card-text text-muted mb-0">Здесь отображаются клиенты, у которых есть номер телефона и номер договора.</p>
             </div>
-            <button type="button" class="btn btn-success" data-bs-toggle="modal" data-bs-target="#createGeneralApplicationModal">
-                <i class="bi bi-plus-circle me-1"></i> Создать заявку без клиента
+            <button type="button" class="btn btn-outline-primary btn-lg" data-bs-toggle="modal" data-bs-target="#createGeneralApplicationModal">
+                <i class="bi bi-plus-circle me-1"></i> Создать заявку без договора
             </button>
         </div>
 
@@ -91,29 +91,35 @@
     </div>
 </div>
 
-<!-- Модальное окно создания заявки без клиента -->
+<!-- Модальное окно создания заявки без договора -->
 <div class="modal fade" id="createGeneralApplicationModal" tabindex="-1" aria-labelledby="createGeneralApplicationModalLabel" aria-hidden="true">
   <div class="modal-dialog modal-lg">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title" id="createGeneralApplicationModalLabel">Создание заявки без привязки к клиенту</h5>
+        <h5 class="modal-title" id="createGeneralApplicationModalLabel">Создание заявки без договора</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
       <form action="{{ url_for('main.create_general_application') }}" method="post">
         <div class="modal-body">
             <div class="alert alert-info" role="alert">
                 <i class="bi bi-info-circle me-2"></i>
-                Заявка будет создана без привязки к конкретному клиенту. Вы можете указать контактные данные и детали проблемы.
+                Будет создан новый клиент без договора. Укажите ФИО, телефон и опционально комментарий о клиенте.
             </div>
             
             <div class="form-floating mb-3">
-                <input type="text" class="form-control" id="contact_name" name="contact_name" placeholder="ФИО обратившегося">
-                <label for="contact_name">ФИО обратившегося (опционально)</label>
+                <input type="text" class="form-control" id="contact_name" name="contact_name" placeholder="ФИО клиента" required>
+                <label for="contact_name">ФИО клиента <span class="text-danger">*</span></label>
             </div>
             
             <div class="form-floating mb-3">
-                <input type="text" class="form-control" id="contact_phone" name="contact_phone" placeholder="Телефон">
-                <label for="contact_phone">Телефон для связи (опционально)</label>
+                <input type="text" class="form-control" id="contact_phone" name="contact_phone" placeholder="Телефон" required>
+                <label for="contact_phone">Телефон для связи <span class="text-danger">*</span></label>
+            </div>
+            
+            <div class="form-floating mb-3">
+                <textarea class="form-control" id="client_comment" name="client_comment" placeholder="Комментарий о клиенте" style="height: 80px"></textarea>
+                <label for="client_comment">Комментарий о клиенте (опционально)</label>
+                <small class="form-text text-muted">Можно указать название компании, дополнительные контакты, особые пожелания и т.д.</small>
             </div>
             
             <div class="form-floating mb-3">
