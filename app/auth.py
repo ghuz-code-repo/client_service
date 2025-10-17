@@ -9,6 +9,17 @@ from werkzeug.security import generate_password_hash
 auth = Blueprint('auth', __name__)
 
 
+# app/auth.py
+from flask import render_template, flash, redirect, url_for, Blueprint, current_app, request
+from flask_login import login_user, logout_user, login_required, current_user
+from .extensions import db
+from .models import User
+from .decorators import admin_required
+from werkzeug.security import generate_password_hash
+
+auth = Blueprint('auth', __name__)
+
+
 @auth.route('/login', methods=['GET', 'POST'])
 def login():
     if current_user.is_authenticated:

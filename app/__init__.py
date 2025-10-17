@@ -56,6 +56,7 @@ def create_app(config_class=Config):
     @app.context_processor
     def inject_user_and_year():
         return {'current_year': datetime.date.today().year}
+    
     return app
 
 

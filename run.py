@@ -66,28 +66,9 @@ def background_sync_task(app_context):
 #       }'")
 
 # Configure app to work behind a proxy
-app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
-
-# Direct route handler for static files with the prefix
-@app.route('/client-service/static/<path:filename>')
-def custom_static(filename):
-    print(f"Custom static file request for: {filename}")
-    return app.send_static_file(filename)
-
-# Apply PrefixMiddleware if running behind proxy
-# if behind_proxy:
-#     app.wsgi_app = PrefixMiddleware(app.wsgi_app, app=app, prefix=prefix)
-#     print(f"Applied PrefixMiddleware with prefix: {prefix}")
-    
-    # Test URL generation to debug
-    # with app.test_request_context():
-    #     print(f"Test static URL: {url_for('static', filename='css/common.css')}")
-
-# app.config.update(
-#     SERVER_NAME=None,  # Set to None to avoid URL generation issues
-#     APPLICATION_ROOT=prefix,
-# )
-
+# НЕ используем x_prefix=1, т.к. nginx делает rewrite и убирает префикс
+# Префикс нужен только для генерации внешних URL, но не для внутренней маршрутизации
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=0)
 
 if __name__ == '__main__':
     # 1. Создаем локальную базу данных и таблицы (если их нет)
