@@ -19,15 +19,18 @@ ENV PYTHONUNBUFFERED=1
 # Set the working directory in the container
 WORKDIR /app
 
+# Copy auth-connector package first
+COPY auth-connector /app/auth-connector
+
 # Copy the requirements file into the container at /app
-COPY requirements.txt .
+COPY client_service/requirements.txt .
 
 # Install any needed packages specified in requirements.txt
 # Use --no-cache-dir to reduce image size
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the rest of the application code into the container at /app
-COPY . .
+COPY client_service /app
 
 # Make port 5002 available to the world outside this container
 EXPOSE 80

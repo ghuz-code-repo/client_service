@@ -13,6 +13,13 @@ load_dotenv()
 from app import create_app
 from data_sync import sync_data, create_database
 
+# Import service discovery
+try:
+    from auth_connector.service_discovery import init_service_discovery_flask
+except ImportError:
+    init_service_discovery_flask = None
+    print("⚠️ auth-connector not installed, service discovery disabled")
+
 
 
 # Создаем экземпляр приложения с помощью нашей фабрики
@@ -90,13 +97,29 @@ if __name__ == '__main__':
     with app.app_context():
         sync_data()
 
-    # 3. Запускаем периодическую синхронизацию в отдельном фоновом потоке
+    # 3. SERVICE DISCOVERY INTEGRATION - Initialize service discovery for automatic nginx registration
+    if init_service_discovery_flask:
+        try:
+            service_discovery_client = init_service_discovery_flask(
+                app,
+                service_key="client-service",
+                internal_url="http://client-service-service:80",
+                registry_url=os.getenv('AUTH_SERVICE_URL', 'http://auth-service:80') + '/api/registry',
+                heartbeat_interval=30
+            )
+            print("✅ Service discovery initialized successfully")
+        except Exception as e:
+            print(f"⚠️ Service discovery initialization failed: {e}")
+    else:
+        print("⚠️ Service discovery not available")
+
+    # 4. Запускаем периодическую синхронизацию в отдельном фоновом потоке
     print("\nЗапуск фонового процесса для периодической синхронизации данных...")
     sync_thread = threading.Thread(target=background_sync_task, args=(app.app_context(),))
     sync_thread.daemon = True  # Поток завершится при выходе из основного приложения
     sync_thread.start()
 
-    # 4. Запускаем веб-приложение Flask
+    # 5. Запускаем веб-приложение Flask
     print("\nЗапуск веб-приложения Flask...")
     # Для production используйте Gunicorn или другой WSGI-сервер
     # use_reloader=False чтобы избежать двойного запуска синхронизации

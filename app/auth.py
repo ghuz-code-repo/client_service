@@ -9,7 +9,7 @@ from werkzeug.security import generate_password_hash
 auth = Blueprint('auth', __name__)
 
 
-@auth.route('/client-service/login', methods=['GET', 'POST'])
+@auth.route('/login', methods=['GET', 'POST'])
 def login():
     if current_user.is_authenticated:
         return redirect(url_for('main.index'))
@@ -31,14 +31,14 @@ def login():
     return render_template('login.html')
 
 
-@auth.route('/client-service/logout')
+@auth.route('/logout')
 @login_required
 def logout():
     logout_user()
     return redirect(url_for('auth.login'))
 
 
-@auth.route('/client-service/users')
+@auth.route('/users')
 @login_required
 @admin_required
 def users():
@@ -47,7 +47,7 @@ def users():
     return render_template('users.html', users=all_users, roles=roles)
 
 
-@auth.route('/client-service/users/create', methods=['POST'])
+@auth.route('/users/create', methods=['POST'])
 @login_required
 @admin_required
 def create_user():
@@ -71,7 +71,7 @@ def create_user():
     return redirect(url_for('auth.users'))
 
 
-@auth.route('/client-service/users/<int:user_id>/delete', methods=['POST'])
+@auth.route('/users/<int:user_id>/delete', methods=['POST'])
 @login_required
 @admin_required
 def delete_user(user_id):
