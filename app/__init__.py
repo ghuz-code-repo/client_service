@@ -1,7 +1,8 @@
 # app/__init__.py
 import datetime
 import os
-from flask import Flask
+import base64
+from flask import Flask, g, request
 from .extensions import db, mail, login_manager, migrate
 from config import Config
 
@@ -16,11 +17,57 @@ def create_app(config_class=Config):
     app = Flask(__name__)
     app.config.from_object(config_class)
 
+    # Применяем PrefixMiddleware для корректной работы url_for() с префиксом
+    from prefix_middleware import PrefixMiddleware
+    app.wsgi_app = PrefixMiddleware(app.wsgi_app, prefix='/client-service')
+
     # Инициализация расширений
     db.init_app(app)
     mail.init_app(app)
     login_manager.init_app(app)
     migrate.init_app(app, db)  # Связываем Flask-Migrate с приложением и БД
+
+    # ========== AUTH-CONNECTOR INTEGRATION ==========
+    
+    @app.before_request
+    def process_gateway_headers():
+        """
+        Обработка заголовков от gateway перед каждым запросом.
+        Работает параллельно с Flask-Login.
+        """
+        # Извлечение данных пользователя из заголовков
+        g.auth_user_id = request.headers.get('X-User-ID')
+        g.username = request.headers.get('X-User-Name')
+        g.email = request.headers.get('X-User-Email', '')
+        g.phone = request.headers.get('X-User-Phone', '')
+        
+        # Декодирование полного имени из base64
+        encoded_name = request.headers.get('X-User-Full-Name', '')
+        encoding = request.headers.get('X-User-Full-Name-Encoding', '')
+        if encoding == 'base64' and encoded_name:
+            try:
+                g.full_name = base64.b64decode(encoded_name).decode('utf-8')
+            except Exception as e:
+                app.logger.warning(f"Failed to decode full name: {e}")
+                g.full_name = ''
+        else:
+            g.full_name = encoded_name
+        
+        # Флаг администратора
+        g.is_admin = request.headers.get('X-User-Admin', 'false').lower() == 'true'
+        
+        # Роли и разрешения для сервиса
+        service_roles = request.headers.get('X-User-Service-Roles', '')
+        g.service_roles = [r.strip() for r in service_roles.split(',') if r.strip()]
+        
+        service_perms = request.headers.get('X-User-Service-Permissions', '')
+        g.service_permissions = [p.strip() for p in service_perms.split(',') if p.strip()]
+        
+        # Debug logging
+        if g.auth_user_id:
+            app.logger.debug(f"Gateway auth: user={g.username}, roles={g.service_roles}, permissions={len(g.service_permissions)}")
+    
+    # ================================================
 
     # Регистрация Blueprints (маршрутов)
     from .routes import main as main_blueprint
@@ -28,6 +75,38 @@ def create_app(config_class=Config):
 
     from .auth import auth as auth_blueprint
     app.register_blueprint(auth_blueprint)
+    
+    # Добавляем функции для шаблонов (после регистрации blueprints)
+    @app.context_processor
+    def inject_gateway_auth():
+        """Добавляет функции Gateway auth в контекст всех шаблонов"""
+        from .auth_utils import (
+            is_authenticated, 
+            get_current_username,
+            get_current_full_name,
+            get_user_avatar_url,
+            is_admin as gateway_is_admin_func, 
+            has_permission,
+            has_role,
+            get_current_user_from_gateway
+        )
+        from flask_login import current_user
+        
+        # Если пользователь не залогинен через Flask-Login, пытаемся получить из Gateway
+        gateway_user = None
+        if not current_user.is_authenticated:
+            gateway_user = get_current_user_from_gateway()
+        
+        return {
+            'gateway_is_authenticated': is_authenticated,
+            'gateway_username': get_current_username,
+            'gateway_full_name': get_current_full_name,
+            'gateway_avatar_url': get_user_avatar_url,
+            'gateway_is_admin': gateway_is_admin_func,
+            'gateway_has_permission': has_permission,
+            'gateway_has_role': has_role,
+            'current_user': gateway_user if gateway_user else current_user  # Заменяем current_user на Gateway пользователя
+        }
 
     # --- РЕГИСТРАЦИЯ CLI-КОМАНД ---
     # Эти команды заменяют старый код, который выполнялся при запуске.

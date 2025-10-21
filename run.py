@@ -1,5 +1,6 @@
 # run.py
 import os
+import sys
 import threading
 import time
 from dotenv import load_dotenv
@@ -7,17 +8,25 @@ from flask import Flask, url_for
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.middleware.proxy_fix import ProxyFix
 from prefix_middleware import PrefixMiddleware
+
+# Fix encoding for Docker logs
+sys.stdout.reconfigure(encoding='utf-8')
+sys.stderr.reconfigure(encoding='utf-8')
+
 # Загружаем переменные окружения из файла .env в самом начале
 # Это нужно сделать до импорта app и config, чтобы они "увидели" эти переменные
 load_dotenv()
 from app import create_app
 from data_sync import sync_data, create_database
 
-# Import service discovery
+# Import service discovery and auth-connector
 try:
     from auth_connector.service_discovery import init_service_discovery_flask
+    from auth_connector import AuthClient, PermissionRegistry
+    auth_connector_available = True
 except ImportError:
     init_service_discovery_flask = None
+    auth_connector_available = False
     print("⚠️ auth-connector not installed, service discovery disabled")
 
 
@@ -78,9 +87,137 @@ if __name__ == '__main__':
     with app.app_context():
         sync_data()
 
-    # 3. SERVICE DISCOVERY INTEGRATION - Initialize service discovery for automatic nginx registration
-    if init_service_discovery_flask:
+    # ========== AUTH-CONNECTOR INTEGRATION ==========
+    
+    if auth_connector_available:
         try:
+            # 3A. Permission Registry (декларирование разрешений)
+            print("\n" + "="*70)
+            print("📋 Initializing Permission Registry")
+            print("="*70)
+            
+            registry = PermissionRegistry("client-service")
+            
+            # Заявки (Applications)
+            registry.register(
+                "client-service.applications.view",
+                "Просмотр заявок",
+                "Разрешение на просмотр всех заявок",
+                "applications"
+            )
+            registry.register(
+                "client-service.applications.create",
+                "Создание заявок",
+                "Разрешение на создание новых заявок",
+                "applications"
+            )
+            registry.register(
+                "client-service.applications.edit",
+                "Редактирование заявок",
+                "Разрешение на редактирование заявок",
+                "applications"
+            )
+            registry.register(
+                "client-service.applications.delete",
+                "Удаление заявок",
+                "Разрешение на удаление заявок",
+                "applications"
+            )
+            registry.register(
+                "client-service.applications.assign",
+                "Назначение ответственных",
+                "Разрешение на назначение ответственных",
+                "applications"
+            )
+            registry.register(
+                "client-service.applications.status.change",
+                "Изменение статуса",
+                "Разрешение на изменение статуса заявок",
+                "applications"
+            )
+            registry.register(
+                "client-service.applications.export",
+                "Экспорт заявок",
+                "Разрешение на экспорт заявок в Excel",
+                "applications"
+            )
+            
+            # Ответственные лица (Responsible)
+            registry.register(
+                "client-service.responsible.view",
+                "Просмотр ответственных",
+                "Разрешение на просмотр ответственных лиц",
+                "responsible"
+            )
+            registry.register(
+                "client-service.responsible.create",
+                "Создание ответственных",
+                "Разрешение на создание ответственных лиц",
+                "responsible"
+            )
+            registry.register(
+                "client-service.responsible.edit",
+                "Редактирование ответственных",
+                "Разрешение на редактирование ответственных лиц",
+                "responsible"
+            )
+            registry.register(
+                "client-service.responsible.delete",
+                "Удаление ответственных",
+                "Разрешение на удаление ответственных лиц",
+                "responsible"
+            )
+            
+            # Администрирование
+            registry.register(
+                "client-service.admin.panel",
+                "Панель администратора",
+                "Доступ к панели администратора",
+                "admin"
+            )
+            registry.register(
+                "client-service.admin.users",
+                "Управление пользователями",
+                "Управление пользователями системы",
+                "admin"
+            )
+            registry.register(
+                "client-service.admin.settings",
+                "Настройки системы",
+                "Управление настройками системы",
+                "admin"
+            )
+            registry.register(
+                "client-service.admin.logs",
+                "Просмотр логов",
+                "Доступ к системным логам",
+                "admin"
+            )
+            
+            print(f"✅ Registered {len(registry.get_all_permissions())} permissions")
+            
+            # 3B. Auth Client (для синхронизации)
+            auth_client = AuthClient(
+                auth_service_url=os.getenv('AUTH_SERVICE_URL', 'http://auth-service:80'),
+                service_key="client-service",
+                timeout=10
+            )
+            
+            # Синхронизация разрешений с auth-service
+            try:
+                permissions_data = registry.to_dict()['permissions']
+                if auth_client.sync_permissions(permissions_data):
+                    print(f"✅ Permissions synced with auth-service")
+                else:
+                    print(f"⚠️ Failed to sync permissions with auth-service")
+            except Exception as e:
+                print(f"⚠️ Permission sync error: {e}")
+            
+            # 3C. Service Discovery (автоматическая регистрация)
+            print("\n" + "="*70)
+            print("🚀 Initializing Service Discovery")
+            print("="*70)
+            
             service_discovery_client = init_service_discovery_flask(
                 app,
                 service_key="client-service",
@@ -88,11 +225,14 @@ if __name__ == '__main__':
                 registry_url=os.getenv('AUTH_SERVICE_URL', 'http://auth-service:80') + '/api/registry',
                 heartbeat_interval=30
             )
-            print("✅ Service discovery initialized successfully")
+            print("✅ Service discovery initialized")
+            
         except Exception as e:
-            print(f"⚠️ Service discovery initialization failed: {e}")
-    else:
-        print("⚠️ Service discovery not available")
+            print(f"⚠️ Auth-connector initialization failed: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    # ================================================
 
     # 4. Запускаем периодическую синхронизацию в отдельном фоновом потоке
     print("\nЗапуск фонового процесса для периодической синхронизации данных...")

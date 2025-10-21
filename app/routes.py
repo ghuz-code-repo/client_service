@@ -11,7 +11,7 @@ from openpyxl.cell import MergedCell
 from openpyxl.styles import Font, Alignment
 from flask import (render_template, request, Blueprint, abort, flash, redirect,
                    url_for, jsonify, current_app, send_file)
-from flask_login import login_required, current_user
+from flask_login import current_user  # Keep for backward compatibility during migration
 from sqlalchemy.orm import selectinload, joinedload
 from sqlalchemy import text
 from flask_mail import Message
@@ -21,7 +21,8 @@ from .models import (User, EstateDealsContacts, EstateDeals, EstateSells, Client
                      Application, Defect, ApplicationLog, ResponsiblePerson, EstateHouses, responsible_assignments,
                      DefectType, EmailLog, ApplicationType)
 from .email_utils import generate_and_send_email
-from .decorators import permission_required, admin_required
+from .decorators import permission_required, admin_required, auth_required  # Import auth_required
+from .auth_utils import has_role as gateway_has_role, is_admin as gateway_is_admin
 from sqlalchemy import or_
 
 main = Blueprint('main', __name__)
@@ -31,6 +32,58 @@ main = Blueprint('main', __name__)
 def health():
     """Health check endpoint for Docker health checks."""
     return {'status': 'ok', 'service': 'client-service'}, 200
+
+
+@main.route('/api/sync/permissions')
+def sync_permissions():
+    """
+    Endpoint для синхронизации permissions с auth-service (PULL-модель).
+    Auth-service вызывает этот endpoint для получения списка permissions.
+    """
+    permissions = [
+        # Applications
+        {"name": "client-service.applications.view", "displayName": "Просмотр заявок", 
+         "description": "Разрешение на просмотр всех заявок", "category": "applications"},
+        {"name": "client-service.applications.create", "displayName": "Создание заявок",
+         "description": "Разрешение на создание новых заявок", "category": "applications"},
+        {"name": "client-service.applications.edit", "displayName": "Редактирование заявок",
+         "description": "Разрешение на редактирование заявок", "category": "applications"},
+        {"name": "client-service.applications.delete", "displayName": "Удаление заявок",
+         "description": "Разрешение на удаление заявок", "category": "applications"},
+        {"name": "client-service.applications.assign", "displayName": "Назначение ответственных",
+         "description": "Разрешение на назначение ответственных", "category": "applications"},
+        {"name": "client-service.applications.status.change", "displayName": "Изменение статуса",
+         "description": "Разрешение на изменение статуса заявок", "category": "applications"},
+        {"name": "client-service.applications.export", "displayName": "Экспорт заявок",
+         "description": "Разрешение на экспорт заявок в Excel", "category": "applications"},
+        
+        # Responsible
+        {"name": "client-service.responsible.view", "displayName": "Просмотр ответственных",
+         "description": "Разрешение на просмотр ответственных лиц", "category": "responsible"},
+        {"name": "client-service.responsible.create", "displayName": "Создание ответственных",
+         "description": "Разрешение на создание ответственных лиц", "category": "responsible"},
+        {"name": "client-service.responsible.edit", "displayName": "Редактирование ответственных",
+         "description": "Разрешение на редактирование ответственных лиц", "category": "responsible"},
+        {"name": "client-service.responsible.delete", "displayName": "Удаление ответственных",
+         "description": "Разрешение на удаление ответственных лиц", "category": "responsible"},
+        
+        # Admin
+        {"name": "client-service.admin.panel", "displayName": "Панель администратора",
+         "description": "Доступ к панели администратора", "category": "admin"},
+        {"name": "client-service.admin.users", "displayName": "Управление пользователями",
+         "description": "Управление пользователями системы", "category": "admin"},
+        {"name": "client-service.admin.settings", "displayName": "Настройки системы",
+         "description": "Управление настройками системы", "category": "admin"},
+        {"name": "client-service.admin.logs", "displayName": "Просмотр логов",
+         "description": "Доступ к системным логам", "category": "admin"},
+    ]
+    
+    return {
+        'success': True,
+        'permissions': permissions,
+        'service_key': 'client-service',
+        'total': len(permissions)
+    }, 200
 
 
 def send_email_async(app, application_id):
@@ -84,7 +137,7 @@ class SQLPagination:
 
 
 @main.route('/')
-@login_required
+@auth_required
 def index():
     page = request.args.get('page', 1, type=int)
     search_query = request.args.get('search', '')
@@ -158,7 +211,7 @@ def index():
 
 
 @main.route('/client/<int:client_id>')
-@login_required
+@auth_required
 def client_card(client_id):
     contact = EstateDealsContacts.query.get_or_404(client_id)
     deals_for_client = contact.deals.options(selectinload(EstateDeals.sell).selectinload(EstateSells.house)).all()
@@ -194,7 +247,7 @@ def client_card(client_id):
                            client_comment=contact.client_comment)
 
 @main.route('/export-applications')
-@login_required
+@auth_required
 def export_applications():
     """Экспорт заявок в Excel с учетом всех фильтров"""
     # Базовый запрос с предзагрузкой связанных данных
@@ -206,10 +259,10 @@ def export_applications():
     )
 
     # Фильтрация заявок в зависимости от роли
-    if not current_user.has_role('Админ'):
-        created_by_me = Application.creator_id == current_user.id
+    if not gateway_has_role('Админ'):
+        created_by_me = Application.creator_id == current_user.id if current_user and current_user.is_authenticated else False
         responsible_for = Application.responsible_person_id == (
-            current_user.responsible_person_profile.id if current_user.responsible_person_profile else -1
+            current_user.responsible_person_profile.id if (current_user and current_user.is_authenticated and current_user.responsible_person_profile) else -1
         )
         query = query.filter(or_(created_by_me, responsible_for))
     
@@ -415,7 +468,7 @@ def export_applications():
 
 
 @main.route('/applications')
-@login_required
+@auth_required
 def applications():
     page = request.args.get('page', 1, type=int)
 
@@ -427,14 +480,14 @@ def applications():
     )
 
     # Фильтрация заявок в зависимости от роли
-    if not current_user.has_role('Админ'):
+    if not gateway_has_role('Админ'):
         # Пользователь видит заявки, которые он создал
-        created_by_me = Application.creator_id == current_user.id
+        created_by_me = Application.creator_id == current_user.id if current_user and current_user.is_authenticated else False
 
         # Пользователь видит заявки, где он - ответственный
         # (через связь User -> ResponsiblePerson)
         responsible_for = Application.responsible_person_id == (
-            current_user.responsible_person_profile.id if current_user.responsible_person_profile else -1
+            current_user.responsible_person_profile.id if (current_user and current_user.is_authenticated and current_user.responsible_person_profile) else -1
         )
 
         query = query.filter(or_(created_by_me, responsible_for))
@@ -525,7 +578,7 @@ def applications():
                          application_types=application_types)
 
 @main.route('/client/<int:client_id>/application/create', methods=['POST'])
-@login_required
+@auth_required
 def create_application(client_id):
     contact = EstateDealsContacts.query.get_or_404(client_id)
     form_data = request.form
@@ -642,7 +695,7 @@ def get_or_create_system_client():
 
 
 @main.route('/application/create-general', methods=['POST'])
-@login_required
+@auth_required
 def create_general_application():
     """Создание заявки без договора - создает нового клиента"""
     form_data = request.form
@@ -776,7 +829,7 @@ def create_general_application():
 
 
 @main.route('/client-service/client/<int:client_id>/update_comment', methods=['POST'])
-@login_required
+@auth_required
 @admin_required
 def update_client_comment(client_id):
     """Обновление комментария клиента (только для админа)"""
@@ -795,8 +848,7 @@ def update_client_comment(client_id):
 
 
 @main.route('/responsible')
-@login_required
-@permission_required('Админ')
+@auth_required(permission='client-service.responsible.view')
 def responsible_persons():
     persons = ResponsiblePerson.query.order_by(ResponsiblePerson.full_name).all()
     all_complex_names_tuples = db.session.query(EstateHouses.complex_name).filter(EstateHouses.complex_name.isnot(None),
@@ -813,8 +865,7 @@ def responsible_persons():
 
 
 @main.route('/responsible', methods=['POST'])
-@login_required
-@permission_required('Админ')
+@auth_required(permission='client-service.responsible.create')
 def create_responsible_person():
     form_data = request.form
     new_person = ResponsiblePerson(full_name=form_data.get('full_name'), email=form_data.get('email'),
@@ -840,8 +891,7 @@ def create_responsible_person():
 
 
 @main.route('/responsible/<int:person_id>/update', methods=['POST'])
-@login_required
-@permission_required('Админ')
+@auth_required(permission='client-service.responsible.edit')
 def update_responsible_person(person_id):
     person = ResponsiblePerson.query.get_or_404(person_id)
     form_data = request.form
@@ -868,8 +918,7 @@ def update_responsible_person(person_id):
 
 
 @main.route('/responsible/<int:person_id>/delete', methods=['POST'])
-@login_required
-@permission_required('Админ')
+@auth_required(permission='client-service.responsible.delete')
 def delete_responsible_person(person_id):
     person = ResponsiblePerson.query.get_or_404(person_id)
     name = person.full_name
@@ -884,7 +933,7 @@ def delete_responsible_person(person_id):
 
 
 @main.route('/api/responsible')
-@login_required
+@auth_required
 def get_responsible_persons():
     complex_name, app_type = request.args.get('complex_name'), request.args.get('application_type')
     if not complex_name or not app_type:
@@ -907,13 +956,12 @@ def get_responsible_persons():
 
 
 @main.route('/application/<int:app_id>/update_status', methods=['POST'])
-@login_required
-@permission_required('Специалист КЦ', 'Менеджер ДКС', 'Менеджер отдела оформления', 'Менеджер ОГР', 'Админ')
+@auth_required(permission='client-service.applications.status.change')
 def update_application_status(app_id):
     app = Application.query.get_or_404(app_id)
-    is_admin = current_user.has_role('Админ')
+    is_admin = gateway_has_role('Админ')
     # Проверяем, привязан ли текущий пользователь к ответственному по этой заявке
-    is_responsible = (current_user.responsible_person_profile and
+    is_responsible = (current_user and current_user.is_authenticated and current_user.responsible_person_profile and
                       current_user.responsible_person_profile.id == app.responsible_person_id)
 
     # ИСПРАВЛЕНИЕ: Разрешаем изменение статуса администраторам и ответственным
@@ -959,7 +1007,7 @@ def update_application_status(app_id):
 
 
 @main.route('/api/application/<int:app_id>/logs')
-@login_required
+@auth_required
 def get_application_logs(app_id):
     Application.query.get_or_404(app_id)
     logs = ApplicationLog.query.filter_by(application_id=app_id).options(
@@ -973,15 +1021,13 @@ def get_application_logs(app_id):
 
 
 @main.route('/reports')
-@login_required
-@permission_required('Админ')
+@auth_required
 def reports():
     return render_template('reports.html')
 
 
 @main.route('/reports/download', methods=['POST'])
-@login_required
-@permission_required('Специалист КЦ', 'Менеджер ДКС', 'Админ')
+@auth_required
 def download_report():
     start_date_str, end_date_str = request.form.get('start_date'), request.form.get('end_date')
     if not start_date_str or not end_date_str:
@@ -1085,8 +1131,7 @@ def download_report():
 
 
 @main.route('/reports/download-completed', methods=['POST'])
-@login_required
-@permission_required('Специалист КЦ', 'Менеджер ДКС', 'Админ')
+@auth_required
 def download_completed_report():
     """Генерирует отчет по завершенным заявкам за указанный период"""
     start_date_str, end_date_str = request.form.get('start_date'), request.form.get('end_date')
@@ -1216,7 +1261,7 @@ def download_completed_report():
 
 
 @main.route('/deadlines/upload', methods=['GET', 'POST'])
-@login_required
+@auth_required
 @admin_required
 def upload_deadlines():
     if request.method == 'POST':
@@ -1303,7 +1348,7 @@ def upload_deadlines():
 
 
 @main.route('/deadlines/template')
-@login_required
+@auth_required
 @admin_required
 def download_deadlines_template():
     try:
@@ -1354,7 +1399,7 @@ def download_deadlines_template():
 
 
 @main.route('/admin/email-logs')
-@login_required
+@auth_required
 @admin_required
 def email_logs():
     page = request.args.get('page', 1, type=int)
@@ -1363,7 +1408,7 @@ def email_logs():
 
 
 @main.route('/admin/defect-types', methods=['GET', 'POST'])
-@login_required
+@auth_required
 @admin_required
 def manage_defect_types():
     if request.method == 'POST':
@@ -1386,7 +1431,7 @@ def manage_defect_types():
 
 
 @main.route('/admin/defect-types/<int:type_id>/delete', methods=['POST'])
-@login_required
+@auth_required
 @admin_required
 def delete_defect_type(type_id):
     type_to_delete = DefectType.query.get_or_404(type_id)
@@ -1401,7 +1446,7 @@ def delete_defect_type(type_id):
 
 
 @main.route('/admin/application-types', methods=['GET', 'POST'])
-@login_required
+@auth_required
 @admin_required
 def manage_application_types():
     if request.method == 'POST':
@@ -1466,7 +1511,7 @@ def manage_application_types():
 
 
 @main.route('/admin/application-types/<int:type_id>/download')
-@login_required
+@auth_required
 @admin_required
 def download_application_template(type_id):
     """Скачивание шаблона Word для типа заявки"""
@@ -1496,7 +1541,7 @@ def download_application_template(type_id):
 
 
 @main.route('/admin/application-types/<int:type_id>/delete', methods=['POST'])
-@login_required
+@auth_required
 @admin_required
 def delete_application_type(type_id):
     app_type_to_delete = ApplicationType.query.get_or_404(type_id)
@@ -1516,7 +1561,7 @@ def delete_application_type(type_id):
 
 
 @main.route('/application/<int:app_id>/delete', methods=['POST'])
-@login_required
+@auth_required
 @admin_required
 def delete_application(app_id):
     """

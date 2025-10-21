@@ -7,15 +7,18 @@ services:
       context: ..
       dockerfile: client_service/Dockerfile
     labels:
-      - "nginx.auth=false"
+      - "nginx.auth=true"  # Enable gateway authentication
     volumes:
       - ./instance:/app/instance
       - ./app/word_templates:/app/app/word_templates
       - ./app/templates:/app/app/templates
     env_file:
       - .env
+    environment:
+      - AUTH_SERVICE_URL=http://auth-service:80
     networks:
-      - service_network     # Только внутренняя сеть сервисов
+      - service_network     # Внутренняя сеть сервисов
+      - data_network        # Для доступа к MongoDB Gateway (временно для миграции)
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:80/health', timeout=5)"]
       interval: 30s
@@ -27,3 +30,6 @@ networks:
   service_network:
     external: true
     name: service_network
+  data_network:
+    external: true
+    name: data_network

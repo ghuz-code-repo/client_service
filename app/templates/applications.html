@@ -110,7 +110,7 @@
                             {% if app.is_overdue %}
                                 <span class="badge bg-danger ms-1" title="Просрочено"><i class="bi bi-exclamation-triangle"></i></span>
                             {% endif %}
-                            {% if current_user.has_role('Админ') %}
+                            {% if gateway_has_role('Админ') %}
                             <button type="button"
                                     class="btn btn-xs btn-outline-danger ms-2"
                                     data-bs-toggle="modal"

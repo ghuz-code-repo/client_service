@@ -19,7 +19,7 @@ ENV PYTHONUNBUFFERED=1
 # Set the working directory in the container
 WORKDIR /app
 
-# Copy auth-connector package first
+# Copy auth-connector package first (from parent directory context)
 COPY auth-connector /app/auth-connector
 
 # Copy the requirements file into the container at /app

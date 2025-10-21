@@ -11,8 +11,8 @@ if os.path.exists(dotenv_path):
 
 class Config:
     # --- Настройки для работы за прокси ---
-    # APPLICATION_ROOT не используется, т.к. ProxyFix обрабатывает X-Forwarded-Prefix
-    # и nginx делает rewrite для удаления префикса из PATH_INFO
+    # Flask использует APPLICATION_ROOT для генерации правильных URL через url_for()
+    APPLICATION_ROOT = '/client-service'
     
     # --- Ключевые настройки безопасности ---
     SECRET_KEY = os.environ.get('SECRET_KEY')

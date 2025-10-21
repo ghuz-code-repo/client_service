@@ -1,4 +1,5 @@
 # data_sync.py
+import sys
 import time
 from sqlalchemy import create_engine, inspect
 from app.extensions import db
@@ -6,6 +7,11 @@ from app.models import EstateSells, EstateDeals, EstateDealsContacts, EstateHous
 from config import Config
 from sqlalchemy.orm import noload
 from app.models import EstateSells, EstateDeals, EstateDealsContacts, EstateHouses
+
+# Fix encoding for Docker logs
+sys.stdout.reconfigure(encoding='utf-8')
+sys.stderr.reconfigure(encoding='utf-8')
+
 # --- НОВОЕ: Устанавливаем размер порции данных для обработки ---
 # Это количество записей, которое будет загружаться в память за один раз.
 # 1000 - это хороший баланс между скоростью и использованием памяти.

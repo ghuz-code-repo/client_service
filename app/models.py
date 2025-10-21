@@ -2,25 +2,32 @@
 import datetime
 import json
 from .extensions import db
-from werkzeug.security import generate_password_hash, check_password_hash
 from flask_login import UserMixin
 
 class User(UserMixin, db.Model):
+    """
+    Модель пользователя для хранения локальных данных.
+    
+    Примечание: Аутентификация и управление пользователями теперь 
+    осуществляется через Gateway auth-service.
+    Эта модель используется только для:
+    - Связи с существующими данными (ResponsiblePerson, Applications)
+    - Хранения auth_user_id для сопоставления с Gateway
+    """
     __tablename__ = 'users'
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(64), index=True, unique=True, nullable=False)
-    password_hash = db.Column(db.String(256))
+    # password_hash удалён - аутентификация через Gateway
     role = db.Column(db.String(64), nullable=False)
-    # НОВАЯ СВЯЗЬ: профиль ответственного, привязанный к этому пользователю
+    
+    # Связь с Gateway auth-service
+    auth_user_id = db.Column(db.String(24), unique=True, nullable=True, index=True)
+    
+    # Связь с профилем ответственного лица
     responsible_person_profile = db.relationship('ResponsiblePerson', backref='user_account', uselist=False, lazy='joined')
 
-    def set_password(self, password):
-        self.password_hash = generate_password_hash(password)
-
-    def check_password(self, password):
-        return check_password_hash(self.password_hash, password)
-
     def has_role(self, *roles):
+        """Проверка роли. Примечание: role синхронизируется с Gateway."""
         return self.role in roles
 
 responsible_assignments = db.Table('responsible_assignments',

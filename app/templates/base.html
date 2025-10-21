@@ -136,22 +136,21 @@
     <header>
         <nav class="navbar navbar-expand-lg">
             <div class="container">
-                <a class="navbar-brand" href="{{ url_for('main.index') if current_user.is_authenticated else url_for('auth.login') }}">
-                    <img src="/client-service/static/logo.svg" alt="Golden House Logo" height="40" class="d-inline-block align-text-top">
+                <a class="navbar-brand" href="{{ url_for('main.index') if gateway_is_authenticated() else url_for('auth.login') }}">
+                    <img src="{{ url_for('static', filename='logo.svg') }}" alt="Golden House Logo" height="40" class="d-inline-block align-text-top">
                 </a>
                 <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
                     <span class="navbar-toggler-icon"></span>
                 </button>
                 <div class="collapse navbar-collapse" id="navbarNav">
                     <ul class="navbar-nav me-auto mb-2 mb-lg-0">
-                        {% if current_user.is_authenticated %}
+                        {% if gateway_is_authenticated() %}
                             <li class="nav-item"><a class="nav-link {% if request.endpoint == 'main.index' %}active{% endif %}" href="{{ url_for('main.index') }}">Клиенты</a></li>
                             <li class="nav-item"><a class="nav-link {% if request.endpoint == 'main.applications' %}active{% endif %}" href="{{ url_for('main.applications') }}">Заявки</a></li>
 
-                            {% if current_user.has_role('Админ') %}
+                            {% if gateway_is_admin() or gateway_has_permission('client-service.admin.panel') %}
                             <li class="nav-item"><a class="nav-link {% if request.endpoint == 'main.responsible_persons' %}active{% endif %}" href="{{ url_for('main.responsible_persons') }}">Ответственные</a></li>
                             <li class="nav-item"><a class="nav-link {% if request.endpoint == 'main.upload_deadlines' %}active{% endif %}" href="{{ url_for('main.upload_deadlines') }}">Загрузка сроков</a></li>
-                            <li class="nav-item"><a class="nav-link {% if request.endpoint == 'auth.users' %}active{% endif %}" href="{{ url_for('auth.users') }}">Пользователи</a></li>
                             <li class="nav-item"><a class="nav-link {% if request.endpoint == 'main.email_logs' %}active{% endif %}" href="{{ url_for('main.email_logs') }}">Email Логи</a></li>
                             <li class="nav-item">
                                 <a class="nav-link" data-bs-toggle="collapse" href="#subnavCollapse" role="button" aria-expanded="false" aria-controls="subnavCollapse">
@@ -169,10 +168,16 @@
                                 <i class="bi bi-sun-fill"></i>
                             </a>
                         </li>
-                        {% if current_user.is_authenticated %}
+                        {% if gateway_is_authenticated() %}
                             <li class="nav-item dropdown">
-                                <a class="nav-link dropdown-toggle" href="#" id="navbarUserDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
-                                    <i class="bi bi-person-circle"></i> {{ current_user.username }} ({{ current_user.role }})
+                                <a class="nav-link dropdown-toggle d-flex align-items-center" href="#" id="navbarUserDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                                    {% set avatar_url = gateway_avatar_url() %}
+                                    {% if avatar_url %}
+                                        <img src="{{ avatar_url }}" alt="{{ gateway_username() }}" class="rounded-circle me-2" width="32" height="32" style="object-fit: cover;">
+                                    {% else %}
+                                        <i class="bi bi-person-circle me-2"></i>
+                                    {% endif %}
+                                    <span>{{ gateway_full_name() or gateway_username() }}</span>
                                 </a>
                                 <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="navbarUserDropdown">
                                     <li><a class="dropdown-item" href="{{ url_for('auth.logout') }}">Выйти</a></li>
@@ -186,7 +191,7 @@
             </div>
         </nav>
 
-        {% if current_user.is_authenticated and current_user.has_role('Админ') %}
+        {% if gateway_is_authenticated() and (gateway_is_admin() or gateway_has_permission('client-service.admin.panel')) %}
         <div class="collapse sub-nav-wrapper" id="subnavCollapse">
             <div class="sub-nav-inner">
                 <div class="container d-flex justify-content-center sub-nav-content">
