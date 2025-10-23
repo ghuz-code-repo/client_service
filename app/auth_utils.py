@@ -169,23 +169,17 @@ def get_current_full_name():
 
 def get_user_avatar_url():
     """
-    Возвращает URL аватарки пользователя.
+    Возвращает URL аватарки пользователя из Gateway.
     
     Returns:
-        str: URL аватарки или None
+        str: URL аватарки или None (если нет аватара, показываем иконку)
     """
-    # Пытаемся получить из заголовков Gateway
+    # Получаем URL аватара из заголовка Gateway
     avatar = g.get('avatar_url', '')
     if avatar:
         return avatar
     
-    # Fallback на Gravatar или дефолтную иконку
-    email = g.get('email', '')
-    if email:
-        import hashlib
-        hash_email = hashlib.md5(email.lower().encode('utf-8')).hexdigest()
-        return f"https://www.gravatar.com/avatar/{hash_email}?d=identicon&s=40"
-    
+    # Если аватара нет, возвращаем None - шаблон покажет иконку
     return None
 
 

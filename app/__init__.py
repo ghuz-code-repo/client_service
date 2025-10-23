@@ -41,6 +41,14 @@ def create_app(config_class=Config):
         g.email = request.headers.get('X-User-Email', '')
         g.phone = request.headers.get('X-User-Phone', '')
         
+        # Аватар пользователя
+        avatar_path = request.headers.get('X-User-Avatar', '')
+        if avatar_path:
+            # Если путь начинается с /avatar/, это эндпоинт Gateway
+            g.avatar_url = f"http://localhost{avatar_path}"
+        else:
+            g.avatar_url = ''
+        
         # Декодирование полного имени из base64
         encoded_name = request.headers.get('X-User-Full-Name', '')
         encoding = request.headers.get('X-User-Full-Name-Encoding', '')
