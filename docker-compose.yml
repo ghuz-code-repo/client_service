@@ -16,6 +16,7 @@ services:
       - .env
     environment:
       - AUTH_SERVICE_URL=http://auth-service:80
+      - NOTIFICATION_SERVICE_URL=http://notification-service:80
     networks:
       - service_network     # Внутренняя сеть сервисов
       - data_network        # Для доступа к MongoDB Gateway (временно для миграции)

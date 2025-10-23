@@ -123,6 +123,20 @@
             </div>
             
             <div class="form-floating mb-3">
+                <select class="form-select" id="housing_complex" name="housing_complex">
+                    <option value="">Выберите ЖК...</option>
+                </select>
+                <label for="housing_complex">ЖК (опционально)</label>
+            </div>
+            
+            <div class="form-floating mb-3">
+                <select class="form-select" id="house_number" name="house_number" disabled>
+                    <option value="">Сначала выберите ЖК...</option>
+                </select>
+                <label for="house_number">Номер дома (опционально)</label>
+            </div>
+            
+            <div class="form-floating mb-3">
                 <select class="form-select" id="application_type_general" name="application_type" required>
                     <option value="" selected>Выберите тип...</option>
                     {% for app_type in application_types %}
@@ -254,6 +268,61 @@ document.addEventListener('DOMContentLoaded', function () {
 
     if (addDefectButton) {
         addDefectButton.addEventListener('click', addDefectRow);
+    }
+
+    // Загрузка списка ЖК при открытии модального окна
+    const generalApplicationModal = document.getElementById('createGeneralApplicationModal');
+    const housingComplexSelect = document.getElementById('housing_complex');
+    const houseNumberSelect = document.getElementById('house_number');
+
+    if (generalApplicationModal) {
+        generalApplicationModal.addEventListener('show.bs.modal', function () {
+            // Загружаем список ЖК при открытии модального окна
+            fetch('{{ url_for("main.get_housing_complexes") }}')
+                .then(response => response.json())
+                .then(data => {
+                    housingComplexSelect.innerHTML = '<option value="">Выберите ЖК...</option>';
+                    data.complexes.forEach(complex => {
+                        const option = document.createElement('option');
+                        option.value = complex;
+                        option.textContent = complex;
+                        housingComplexSelect.appendChild(option);
+                    });
+                })
+                .catch(error => console.error('Ошибка загрузки ЖК:', error));
+        });
+    }
+
+    // Обработка выбора ЖК - загружаем список домов
+    if (housingComplexSelect) {
+        housingComplexSelect.addEventListener('change', function () {
+            const selectedComplex = this.value;
+            
+            if (!selectedComplex) {
+                // Если ЖК не выбран, очищаем и блокируем список домов
+                houseNumberSelect.innerHTML = '<option value="">Сначала выберите ЖК...</option>';
+                houseNumberSelect.disabled = true;
+                return;
+            }
+
+            // Загружаем список домов для выбранного ЖК
+            fetch(`{{ url_for("main.get_house_numbers") }}?complex=${encodeURIComponent(selectedComplex)}`)
+                .then(response => response.json())
+                .then(data => {
+                    houseNumberSelect.innerHTML = '<option value="">Выберите дом...</option>';
+                    data.houses.forEach(house => {
+                        const option = document.createElement('option');
+                        option.value = house;
+                        option.textContent = house;
+                        houseNumberSelect.appendChild(option);
+                    });
+                    houseNumberSelect.disabled = false;
+                })
+                .catch(error => {
+                    console.error('Ошибка загрузки домов:', error);
+                    houseNumberSelect.innerHTML = '<option value="">Ошибка загрузки...</option>';
+                });
+        });
     }
 });
 </script>

@@ -84,6 +84,9 @@ class Application(db.Model):
     source = db.Column(db.String(100), nullable=True, default='Звонок')  # Источник заявки
     # НОВОЕ ПОЛЕ: временной штамп последнего изменения статуса
     last_status_change = db.Column(db.DateTime, nullable=True, default=datetime.datetime.now)
+    # НОВЫЕ ПОЛЯ: ЖК и номер дома для заявок без договора
+    housing_complex = db.Column(db.String(255), nullable=True)  # Название ЖК
+    house_number = db.Column(db.String(255), nullable=True)  # Номер дома
     defects = db.relationship('Defect', backref='application', lazy=True, cascade="all, delete-orphan")
     logs = db.relationship('ApplicationLog', backref='application', lazy=True, cascade="all, delete-orphan")
     # НОВАЯ СВЯЗЬ: объект создателя заявки

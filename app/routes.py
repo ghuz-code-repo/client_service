@@ -22,7 +22,7 @@ from .models import (User, EstateDealsContacts, EstateDeals, EstateSells, Client
                      DefectType, EmailLog, ApplicationType)
 from .email_utils import generate_and_send_email
 from .decorators import permission_required, admin_required, auth_required  # Import auth_required
-from .auth_utils import has_role as gateway_has_role, is_admin as gateway_is_admin
+from .auth_utils import has_role as gateway_has_role, is_admin as gateway_is_admin, get_current_user_id
 from sqlalchemy import or_
 
 main = Blueprint('main', __name__)
@@ -610,7 +610,7 @@ def create_application(client_id):
     new_app = Application(client_id=client_id, agreement_number=agreement_number,
                           application_type=application_type_name,
                           comment=comment, responsible_person_id=responsible_person_id,
-                          creator_id=current_user.id, due_date=due_date, source=source)
+                          creator_id=get_current_user_id(), due_date=due_date, source=source)
     db.session.add(new_app)
 
     defects_data = {}
@@ -635,7 +635,7 @@ def create_application(client_id):
 
     db.session.add(ApplicationLog(application=new_app, action="Заявка создана",
                                   comment=f"Назначен ответственный: {ResponsiblePerson.query.get(responsible_person_id).full_name}",
-                                  author_id=current_user.id))
+                                  author_id=get_current_user_id()))
 
     try:
         db.session.commit()
@@ -714,6 +714,10 @@ def create_general_application():
         custom_source = form_data.get('custom_source', '').strip()
         if custom_source:
             source = custom_source
+    
+    # Получаем данные о ЖК и номере дома
+    housing_complex = form_data.get('housing_complex', '').strip()
+    house_number = form_data.get('house_number', '').strip()
 
     # Проверяем обязательные поля
     if not all([application_type_name, comment, responsible_person_id, contact_name, contact_phone]):
@@ -778,9 +782,11 @@ def create_general_application():
         application_type=application_type_name,
         comment=comment, 
         responsible_person_id=responsible_person_id,
-        creator_id=current_user.id, 
+        creator_id=get_current_user_id(), 
         due_date=due_date, 
-        source=source
+        source=source,
+        housing_complex=housing_complex if housing_complex else None,
+        house_number=house_number if house_number else None
     )
     db.session.add(new_app)
     db.session.flush()  # Получаем ID заявки
@@ -811,7 +817,7 @@ def create_general_application():
         application=new_app, 
         action="Заявка создана (без договора)",
         comment=f"Создан новый клиент: {contact_name}. Назначен ответственный: {ResponsiblePerson.query.get(responsible_person_id).full_name}",
-        author_id=current_user.id
+        author_id=get_current_user_id()
     ))
 
     try:
@@ -1003,7 +1009,7 @@ def update_application_status(app_id):
         app.completed_at = None
     
     log_entry = ApplicationLog(application=app, action=f"Статус изменен: {old_status} -> {new_status}", 
-                               comment=comment, author_id=current_user.id)
+                               comment=comment, author_id=get_current_user_id())
     db.session.add(log_entry)
     try:
         db.session.commit()
@@ -1591,5 +1597,37 @@ def delete_application(app_id):
     # Перенаправляем пользователя обратно на страницу со списком заявок
     return redirect(url_for('main.applications'))
 
+
+@main.route('/api/housing-complexes', methods=['GET'])
+@auth_required()
+def get_housing_complexes():
+    """API для получения списка уникальных ЖК"""
+    try:
+        result = db.session.execute(
+            db.text('SELECT DISTINCT complex_name FROM estate_houses WHERE complex_name IS NOT NULL ORDER BY complex_name')
+        ).fetchall()
+        complexes = [row[0] for row in result]
+        return jsonify({'complexes': complexes})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@main.route('/api/house-numbers', methods=['GET'])
+@auth_required()
+def get_house_numbers():
+    """API для получения списка домов для выбранного ЖК"""
+    complex_name = request.args.get('complex')
+    if not complex_name:
+        return jsonify({'error': 'Complex name is required'}), 400
+    
+    try:
+        result = db.session.execute(
+            db.text('SELECT DISTINCT name FROM estate_houses WHERE complex_name = :complex ORDER BY name'),
+            {'complex': complex_name}
+        ).fetchall()
+        houses = [row[0] for row in result]
+        return jsonify({'houses': houses})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 

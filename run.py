@@ -82,6 +82,30 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=0)
 if __name__ == '__main__':
     # 1. Создаем локальную базу данных и таблицы (если их нет)
     create_database(app)
+    
+    # 1.5 Автоматическая миграция для добавления новых полей
+    with app.app_context():
+        from app import db
+        try:
+            print("\n🔧 Проверка и добавление полей housing_complex и house_number...")
+            db.session.execute(db.text('ALTER TABLE applications ADD COLUMN housing_complex VARCHAR(255)'))
+            db.session.commit()
+            print("✅ Поле housing_complex добавлено")
+        except Exception as e:
+            if 'duplicate column name' in str(e).lower() or 'already exists' in str(e).lower():
+                pass  # Поле уже существует
+            else:
+                db.session.rollback()
+        
+        try:
+            db.session.execute(db.text('ALTER TABLE applications ADD COLUMN house_number VARCHAR(255)'))
+            db.session.commit()
+            print("✅ Поле house_number добавлено")
+        except Exception as e:
+            if 'duplicate column name' in str(e).lower() or 'already exists' in str(e).lower():
+                pass  # Поле уже существует
+            else:
+                db.session.rollback()
 
     # 2. Выполняем ПЕРВУЮ и ЕДИНСТВЕННУЮ синхронизацию данных при запуске
     with app.app_context():

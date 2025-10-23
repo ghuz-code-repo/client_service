@@ -3,10 +3,13 @@ import os
 import io
 from datetime import datetime
 from flask import current_app
-from flask_mail import Message
 from docxtpl import DocxTemplate
-from .extensions import db, mail
+from .extensions import db
 from .models import Application, EstateDeals, EstateSells, EmailLog, ApplicationType
+from .notification_client import notification_client
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def generate_and_send_email(application_id):
@@ -95,28 +98,38 @@ def generate_and_send_email(application_id):
             print(f"ERROR: Контекст на момент ошибки: {list(context.keys())}")
             raise ValueError(error_msg)
 
-        # Используем стандартный способ создания сообщения
-        msg = Message(subject=subject_str,
-                      recipients=[responsible.email],
-                      body=f"Поступила новая заявка №{app_obj.id} ({app_obj.application_type}). Подробности в прикрепленном файле.")
-
-        # Используем имя файла на латинице, чтобы исключить любые проблемы
-        msg.attach(f"Application_{app_obj.id}.docx",
-                   "application/vnd.openxmlformats-officedocument.wordprocessingml.document", doc_io.read())
+        # Формируем текст письма
+        email_body = f"Поступила новая заявка №{app_obj.id} ({app_obj.application_type}).\n\n"
+        email_body += f"Клиент: {client.contacts_buy_name}\n"
+        email_body += f"Телефон: {client.contacts_buy_phones}\n"
+        email_body += f"Договор: {app_obj.agreement_number}\n"
+        email_body += f"Комментарий: {app_obj.comment}\n\n"
+        email_body += "Подробности в прикрепленном файле."
 
         log_entry.recipient = responsible.email
         log_entry.subject = subject_str
 
-        mail.send(msg)
-
-        log_entry.status = 'Success'
-        log_entry.server_response = "250 OK: Message accepted for delivery."
-        print(f"INFO: Email для заявки #{application_id} успешно отправлен на {responsible.email}")
+        # Отправляем через notification-service
+        try:
+            result = notification_client.send_email(
+                recipient=responsible.email,
+                subject=subject_str,
+                content=email_body,
+                attachment_filename=f"Application_{app_obj.id}.docx",
+                attachment_content=doc_io.read()
+            )
+            
+            log_entry.status = 'Success'
+            log_entry.server_response = f"Notification ID: {result.get('id', 'N/A')}"
+            logger.info(f"Email для заявки #{application_id} успешно отправлен на {responsible.email}")
+            
+        except Exception as send_error:
+            raise Exception(f"Ошибка отправки через notification-service: {send_error}")
 
     except Exception as e:
         log_entry.status = 'Failed'
         log_entry.server_response = str(e)
-        print(f"CRITICAL ERROR: Не удалось отправить email для заявки #{application_id}. Ошибка: {e}")
+        logger.error(f"Не удалось отправить email для заявки #{application_id}. Ошибка: {e}")
 
     finally:
         # Эта операция выполняется в контексте приложения, который создается

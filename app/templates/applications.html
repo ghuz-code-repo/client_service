@@ -92,6 +92,8 @@
                         <th>ID</th>
                         <th>Клиент</th>
                         <th>№ Договора</th>
+                        <th>ЖК</th>
+                        <th>Дом</th>
                         <th>Тип</th>
                         <th>Статус</th>
                         <th>Ответственный</th>
@@ -144,6 +146,8 @@
                                 {{ app.agreement_number }}
                             {% endif %}
                         </td>
+                        <td>{{ app.housing_complex if app.housing_complex else '-' }}</td>
+                        <td>{{ app.house_number if app.house_number else '-' }}</td>
                         <td>{{ app.application_type }}</td>
                         <td>
                             {% set status_color = {'В работе':'warning text-dark','Выполнено':'success','Частично выполнено':'info text-dark','Закрыто':'secondary','Отклонено':'danger'}.get(app.status, 'light text-dark') %}
@@ -173,7 +177,7 @@
                     </tr>
                     {% else %}
                     <tr>
-                        <td colspan="11" class="text-center text-muted py-4">Нет заявок, соответствующих вашим правам доступа.</td>
+                        <td colspan="13" class="text-center text-muted py-4">Нет заявок, соответствующих вашим правам доступа.</td>
                     </tr>
                     {% endfor %}
                 </tbody>

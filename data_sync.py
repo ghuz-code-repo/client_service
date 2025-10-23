@@ -69,6 +69,36 @@ def sync_data():
                         print("   - Локальные клиенты (с договорами NC-* и SYSTEM-001) сохранены.")
                     elif table_name == 'estate_deals':
                         print(f"   - Очистка таблицы {table_name} (сохраняя договоры без договора)...")
+                        
+                        # ИСПРАВЛЕНИЕ: Изменяем ID локальных договоров на отрицательные, чтобы избежать конфликтов
+                        # Сначала получаем список локальных договоров
+                        local_deals = con.execute(db.text('''
+                            SELECT id FROM estate_deals 
+                            WHERE agreement_number LIKE 'NC-%' 
+                               OR agreement_number = 'SYSTEM-001'
+                        ''')).fetchall()
+                        
+                        # Меняем ID на отрицательные (если еще не отрицательные)
+                        for deal in local_deals:
+                            if deal[0] > 0:
+                                new_id = -deal[0]
+                                # Обновляем ID в estate_deals
+                                con.execute(db.text('''
+                                    UPDATE estate_deals 
+                                    SET id = :new_id 
+                                    WHERE id = :old_id
+                                '''), {'new_id': new_id, 'old_id': deal[0]})
+                                
+                                # Обновляем ссылки в estate_deals_contacts
+                                con.execute(db.text('''
+                                    UPDATE estate_deals_contacts 
+                                    SET id = :new_id 
+                                    WHERE id = :old_id
+                                '''), {'new_id': new_id, 'old_id': deal[0]})
+                        
+                        if local_deals:
+                            print(f"   - Изменено {len(local_deals)} локальных договоров на отрицательные ID.")
+                        
                         # Удаляем только договоры, которые НЕ являются локальными (NC-* и SYSTEM-001)
                         con.execute(db.text('''
                             DELETE FROM estate_deals 

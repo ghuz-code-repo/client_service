@@ -154,6 +154,26 @@ def get_current_username():
     return g.get('username')
 
 
+def get_current_user_id():
+    """
+    Возвращает ID текущего пользователя (работает с Gateway и Flask-Login).
+    Используйте эту функцию вместо current_user.id для совместимости.
+    
+    Returns:
+        str: Gateway user ID (MongoDB ObjectID) или None
+    """
+    # Приоритет: Gateway authentication
+    if g.get('auth_user_id'):
+        return g.auth_user_id
+    
+    # Fallback: Flask-Login (для старых сессий)
+    from flask_login import current_user
+    if current_user.is_authenticated:
+        return current_user.auth_user_id or str(current_user.id)
+    
+    return None
+
+
 def get_current_full_name():
     """
     Возвращает полное имя текущего пользователя из Gateway.
