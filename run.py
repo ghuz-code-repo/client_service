@@ -83,7 +83,18 @@ if __name__ == '__main__':
     # 1. Создаем локальную базу данных и таблицы (если их нет)
     create_database(app)
     
-    # 1.5 Автоматическая миграция для добавления новых полей
+    # 1.5 Выполняем все Alembic миграции автоматически
+    print("\n🔄 Применение миграций базы данных...")
+    try:
+        from flask_migrate import upgrade as flask_migrate_upgrade
+        with app.app_context():
+            flask_migrate_upgrade()
+        print("✅ Миграции успешно применены")
+    except Exception as e:
+        print(f"⚠️  Ошибка применения миграций: {e}")
+        print("Продолжаем запуск...")
+    
+    # 1.6 Автоматическая миграция для добавления новых полей (fallback)
     with app.app_context():
         from app import db
         try:
