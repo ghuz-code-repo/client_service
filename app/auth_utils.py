@@ -203,3 +203,65 @@ def has_role(*role_names):
     
     # Проверяем совпадение с любой из переданных ролей
     return current_role in role_names
+
+
+def get_gateway_users():
+    """
+    Получает список пользователей client-service из Gateway API.
+    Возвращает только пользователей, у которых есть роли в этом сервисе.
+    
+    Returns:
+        list: Список пользователей в формате [{'id': '...', 'username': '...', 'full_name': '...', 'email': '...'}]
+    """
+    import requests
+    import os
+    
+    try:
+        # URL Gateway API для получения пользователей конкретного сервиса
+        gateway_url = os.getenv('AUTH_SERVICE_URL', 'http://auth-service:80')
+        service_key = 'client-service'
+        api_url = f"{gateway_url}/api/services/{service_key}/users"
+        
+        logger.debug(f"Fetching users for service '{service_key}' from Gateway: {api_url}")
+        
+        response = requests.get(api_url, timeout=5)
+        
+        if response.status_code == 200:
+            users_data = response.json()
+            
+            # Преобразуем в удобный формат
+            users = []
+            for user in users_data:
+                # Gateway возвращает поле 'id' (не '_id')
+                user_id = user.get('id', user.get('_id', ''))
+                
+                # Полное имя уже есть в ответе Gateway
+                full_name = user.get('full_name', '')
+                if not full_name:
+                    # Fallback: собираем из частей
+                    parts = []
+                    if user.get('last_name'):
+                        parts.append(user['last_name'])
+                    if user.get('first_name'):
+                        parts.append(user['first_name'])
+                    if user.get('middle_name'):
+                        parts.append(user['middle_name'])
+                    full_name = ' '.join(parts) if parts else user.get('username', '')
+                
+                users.append({
+                    'id': user_id,
+                    'username': user.get('username', ''),
+                    'full_name': full_name,
+                    'email': user.get('email', ''),
+                    'role': user.get('role', 'user')
+                })
+            
+            logger.info(f"Retrieved {len(users)} users for service '{service_key}' from Gateway")
+            return users
+        else:
+            logger.error(f"Failed to get users from Gateway: {response.status_code}")
+            return []
+            
+    except Exception as e:
+        logger.error(f"Error getting users from Gateway: {e}")
+        return []

@@ -857,19 +857,27 @@ def responsible_persons():
     all_complex_names = [name[0] for name in all_complex_names_tuples]
 
     all_application_types = ApplicationType.query.order_by(ApplicationType.name).all()
-    all_users = User.query.order_by(User.username).all()
+    
+    # Получаем пользователей из Gateway вместо локальной БД
+    from .auth_utils import get_gateway_users
+    all_users = get_gateway_users()
+    
     return render_template('responsible.html',
                            persons=persons,
                            all_complex_names=all_complex_names,
-                           all_application_types=all_application_types,all_users=all_users)
+                           all_application_types=all_application_types,
+                           all_users=all_users)
 
 
 @main.route('/responsible', methods=['POST'])
 @auth_required(permission='client-service.responsible.create')
 def create_responsible_person():
     form_data = request.form
-    new_person = ResponsiblePerson(full_name=form_data.get('full_name'), email=form_data.get('email'),
-        user_id=form_data.get('user_id'))
+    new_person = ResponsiblePerson(
+        full_name=form_data.get('full_name'),
+        email=form_data.get('email'),
+        gateway_user_id=form_data.get('user_id') or None  # Gateway User ID
+    )
 
     selected_app_type_names = form_data.getlist('application_types')
     new_person.application_types = selected_app_type_names
@@ -897,7 +905,7 @@ def update_responsible_person(person_id):
     form_data = request.form
     person.full_name = form_data.get('full_name')
     person.email = form_data.get('email')
-    person.user_id = form_data.get('user_id') or None
+    person.gateway_user_id = form_data.get('user_id') or None  # Gateway User ID
 
     selected_app_type_names = form_data.getlist('application_types')
     person.application_types = selected_app_type_names

@@ -11,8 +11,10 @@ class User(UserMixin, db.Model):
     Примечание: Аутентификация и управление пользователями теперь 
     осуществляется через Gateway auth-service.
     Эта модель используется только для:
-    - Связи с существующими данными (ResponsiblePerson, Applications)
+    - Связи с существующими данными (Applications - creator_id)
     - Хранения auth_user_id для сопоставления с Gateway
+    
+    ResponsiblePerson теперь использует gateway_user_id напрямую (не FK).
     """
     __tablename__ = 'users'
     id = db.Column(db.Integer, primary_key=True)
@@ -22,9 +24,6 @@ class User(UserMixin, db.Model):
     
     # Связь с Gateway auth-service
     auth_user_id = db.Column(db.String(24), unique=True, nullable=True, index=True)
-    
-    # Связь с профилем ответственного лица
-    responsible_person_profile = db.relationship('ResponsiblePerson', backref='user_account', uselist=False, lazy='joined')
 
     def has_role(self, *roles):
         """Проверка роли. Примечание: role синхронизируется с Gateway."""
@@ -44,8 +43,8 @@ class ResponsiblePerson(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     full_name = db.Column(db.String(255), nullable=False)
     email = db.Column(db.String(255), nullable=False, unique=True)
-    # НОВОЕ ПОЛЕ: ID пользователя, к которому привязан этот ответственный
-    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, unique=True)
+    # Gateway User ID (MongoDB ObjectID) вместо локального user_id
+    gateway_user_id = db.Column(db.String(24), nullable=True, unique=True, index=True)
     application_types_json = db.Column(db.Text, default='[]')
     assigned_complexes = db.relationship('EstateHouses', secondary=responsible_assignments,
                                          lazy='subquery',
