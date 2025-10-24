@@ -10,7 +10,7 @@ from openpyxl import load_workbook, Workbook
 from openpyxl.cell import MergedCell
 from openpyxl.styles import Font, Alignment
 from flask import (render_template, request, Blueprint, abort, flash, redirect,
-                   url_for, jsonify, current_app, send_file)
+                   url_for, jsonify, current_app, send_file, g)
 from flask_login import current_user  # Keep for backward compatibility during migration
 from sqlalchemy.orm import selectinload, joinedload
 from sqlalchemy import text
@@ -76,6 +76,12 @@ def sync_permissions():
          "description": "Управление настройками системы", "category": "admin"},
         {"name": "client-service.admin.logs", "displayName": "Просмотр логов",
          "description": "Доступ к системным логам", "category": "admin"},
+        
+        # Reports
+        {"name": "client-service.reports.view", "displayName": "Просмотр отчетов",
+         "description": "Разрешение на просмотр и генерацию отчетов", "category": "reports"},
+        {"name": "client-service.reports.download", "displayName": "Скачивание отчетов",
+         "description": "Разрешение на скачивание отчетов в Excel", "category": "reports"},
     ]
     
     return {
@@ -137,7 +143,7 @@ class SQLPagination:
 
 
 @main.route('/')
-@auth_required
+@auth_required(permission='client-service.applications.view')
 def index():
     page = request.args.get('page', 1, type=int)
     search_query = request.args.get('search', '')
@@ -211,7 +217,7 @@ def index():
 
 
 @main.route('/client/<int:client_id>')
-@auth_required
+@auth_required(permission='client-service.applications.view')
 def client_card(client_id):
     contact = EstateDealsContacts.query.get_or_404(client_id)
     deals_for_client = contact.deals.options(selectinload(EstateDeals.sell).selectinload(EstateSells.house)).all()
@@ -247,7 +253,7 @@ def client_card(client_id):
                            client_comment=contact.client_comment)
 
 @main.route('/export-applications')
-@auth_required
+@auth_required(permission='client-service.applications.export')
 def export_applications():
     """Экспорт заявок в Excel с учетом всех фильтров"""
     # Базовый запрос с предзагрузкой связанных данных
@@ -468,7 +474,7 @@ def export_applications():
 
 
 @main.route('/applications')
-@auth_required
+@auth_required(permission='client-service.applications.view')
 def applications():
     page = request.args.get('page', 1, type=int)
 
@@ -578,7 +584,7 @@ def applications():
                          application_types=application_types)
 
 @main.route('/client/<int:client_id>/application/create', methods=['POST'])
-@auth_required
+@auth_required(permission='client-service.applications.create')
 def create_application(client_id):
     contact = EstateDealsContacts.query.get_or_404(client_id)
     form_data = request.form
@@ -695,7 +701,7 @@ def get_or_create_system_client():
 
 
 @main.route('/application/create-general', methods=['POST'])
-@auth_required
+@auth_required(permission='client-service.applications.create')
 def create_general_application():
     """Создание заявки без договора - создает нового клиента"""
     form_data = request.form
@@ -835,8 +841,7 @@ def create_general_application():
 
 
 @main.route('/client-service/client/<int:client_id>/update_comment', methods=['POST'])
-@auth_required
-@admin_required
+@auth_required(permission='client-service.admin.users')
 def update_client_comment(client_id):
     """Обновление комментария клиента (только для админа)"""
     contact = EstateDealsContacts.query.get_or_404(client_id)
@@ -1035,13 +1040,13 @@ def get_application_logs(app_id):
 
 
 @main.route('/reports')
-@auth_required
+@auth_required(permission='client-service.reports.view')
 def reports():
     return render_template('reports.html')
 
 
 @main.route('/reports/download', methods=['POST'])
-@auth_required
+@auth_required(permission='client-service.reports.download')
 def download_report():
     start_date_str, end_date_str = request.form.get('start_date'), request.form.get('end_date')
     if not start_date_str or not end_date_str:
@@ -1145,7 +1150,7 @@ def download_report():
 
 
 @main.route('/reports/download-completed', methods=['POST'])
-@auth_required
+@auth_required(permission='client-service.reports.download')
 def download_completed_report():
     """Генерирует отчет по завершенным заявкам за указанный период"""
     start_date_str, end_date_str = request.form.get('start_date'), request.form.get('end_date')
@@ -1275,8 +1280,7 @@ def download_completed_report():
 
 
 @main.route('/deadlines/upload', methods=['GET', 'POST'])
-@auth_required
-@admin_required
+@auth_required(permission='client-service.admin.settings')
 def upload_deadlines():
     if request.method == 'POST':
         if 'file' not in request.files:
@@ -1362,8 +1366,7 @@ def upload_deadlines():
 
 
 @main.route('/deadlines/template')
-@auth_required
-@admin_required
+@auth_required(permission='client-service.admin.settings')
 def download_deadlines_template():
     try:
         buffer = io.BytesIO()
@@ -1413,8 +1416,7 @@ def download_deadlines_template():
 
 
 @main.route('/admin/email-logs')
-@auth_required
-@admin_required
+@auth_required(permission='client-service.admin.logs')
 def email_logs():
     page = request.args.get('page', 1, type=int)
     logs = EmailLog.query.order_by(EmailLog.timestamp.desc()).paginate(page=page, per_page=20)
@@ -1422,8 +1424,7 @@ def email_logs():
 
 
 @main.route('/admin/defect-types', methods=['GET', 'POST'])
-@auth_required
-@admin_required
+@auth_required(permission='client-service.admin.settings')
 def manage_defect_types():
     if request.method == 'POST':
         new_type_name = request.form.get('name')
@@ -1445,8 +1446,7 @@ def manage_defect_types():
 
 
 @main.route('/admin/defect-types/<int:type_id>/delete', methods=['POST'])
-@auth_required
-@admin_required
+@auth_required(permission='client-service.admin.settings')
 def delete_defect_type(type_id):
     type_to_delete = DefectType.query.get_or_404(type_id)
     try:
@@ -1460,8 +1460,7 @@ def delete_defect_type(type_id):
 
 
 @main.route('/admin/application-types', methods=['GET', 'POST'])
-@auth_required
-@admin_required
+@auth_required(permission='client-service.admin.settings')
 def manage_application_types():
     if request.method == 'POST':
         name = request.form.get('name')
@@ -1525,8 +1524,7 @@ def manage_application_types():
 
 
 @main.route('/admin/application-types/<int:type_id>/download')
-@auth_required
-@admin_required
+@auth_required(permission='client-service.admin.settings')
 def download_application_template(type_id):
     """Скачивание шаблона Word для типа заявки"""
     app_type = ApplicationType.query.get_or_404(type_id)
@@ -1555,8 +1553,7 @@ def download_application_template(type_id):
 
 
 @main.route('/admin/application-types/<int:type_id>/delete', methods=['POST'])
-@auth_required
-@admin_required
+@auth_required(permission='client-service.admin.settings')
 def delete_application_type(type_id):
     app_type_to_delete = ApplicationType.query.get_or_404(type_id)
 
@@ -1575,8 +1572,7 @@ def delete_application_type(type_id):
 
 
 @main.route('/application/<int:app_id>/delete', methods=['POST'])
-@auth_required
-@admin_required
+@auth_required(permission='client-service.applications.delete')
 def delete_application(app_id):
     """
     Удаляет заявку и все связанные с ней данные (дефекты, логи).

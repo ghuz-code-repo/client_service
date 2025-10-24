@@ -77,11 +77,12 @@ def _determine_role_from_permissions():
     roles = g.get('service_roles', [])
     
     # Системный админ или админ сервиса
-    if g.get('is_admin') or 'client-service-admin' in roles:
+    # Проверяем как полное имя роли 'client-service-admin', так и короткое 'admin'
+    if g.get('is_admin') or 'client-service-admin' in roles or 'admin' in roles:
         return 'Админ'
     
     # Менеджер
-    if 'client-service-manager' in roles:
+    if 'client-service-manager' in roles or 'manager' in roles:
         return 'Менеджер ДКС'
     
     # По разрешениям
