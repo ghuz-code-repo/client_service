@@ -148,8 +148,11 @@
                             <li class="nav-item"><a class="nav-link {% if request.endpoint == 'main.index' %}active{% endif %}" href="{{ url_for('main.index') }}">Клиенты</a></li>
                             <li class="nav-item"><a class="nav-link {% if request.endpoint == 'main.applications' %}active{% endif %}" href="{{ url_for('main.applications') }}">Заявки</a></li>
 
-                            {% if gateway_has_permission('client-service.admin.panel') %}
+                            {% if gateway_has_permission('client-service.responsible.view') %}
                             <li class="nav-item"><a class="nav-link {% if request.endpoint == 'main.responsible_persons' %}active{% endif %}" href="{{ url_for('main.responsible_persons') }}">Ответственные</a></li>
+                            {% endif %}
+                            
+                            {% if gateway_has_permission('client-service.admin.panel') %}
                             <li class="nav-item"><a class="nav-link {% if request.endpoint == 'main.upload_deadlines' %}active{% endif %}" href="{{ url_for('main.upload_deadlines') }}">Загрузка сроков</a></li>
                             <li class="nav-item"><a class="nav-link {% if request.endpoint == 'main.email_logs' %}active{% endif %}" href="{{ url_for('main.email_logs') }}">Email Логи</a></li>
                             <li class="nav-item">
@@ -157,6 +160,9 @@
                                     Справочники <i class="bi bi-chevron-down chevron-icon ms-1"></i>
                                 </a>
                             </li>
+                            {% endif %}
+                            
+                            {% if gateway_has_permission('client-service.reports.view') %}
                             <li class="nav-item"><a class="nav-link {% if request.endpoint == 'main.reports' %}active{% endif %}" href="{{ url_for('main.reports') }}">Отчетность</a></li>
                             {% endif %}
                         {% endif %}
