@@ -124,21 +124,6 @@ def has_any_permission(*permission_names):
     return any(perm in permissions for perm in permission_names)
 
 
-
-def has_any_permission(permission_list):
-    """
-    Проверяет наличие хотя бы одного разрешения из списка.
-    
-    Args:
-        permission_list (list): Список разрешений
-        
-    Returns:
-        bool: True если есть хотя бы одно разрешение
-    """
-    permissions = g.get('service_permissions', [])
-    return any(perm in permissions for perm in permission_list)
-
-
 def is_admin():
     """
     Проверяет, является ли пользователь администратором.
