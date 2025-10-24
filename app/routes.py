@@ -22,7 +22,6 @@ from .models import (User, EstateDealsContacts, EstateDeals, EstateSells, Client
                      DefectType, EmailLog, ApplicationType)
 from .email_utils import generate_and_send_email
 from .decorators import permission_required, admin_required, auth_required  # Import auth_required
-from .auth_utils import has_role as gateway_has_role, is_admin as gateway_is_admin, get_current_user_id
 from sqlalchemy import or_
 
 main = Blueprint('main', __name__)
@@ -42,8 +41,10 @@ def sync_permissions():
     """
     permissions = [
         # Applications
-        {"name": "client-service.applications.view", "displayName": "Просмотр заявок", 
-         "description": "Разрешение на просмотр всех заявок", "category": "applications"},
+        {"name": "client-service.applications.view.all", "displayName": "Просмотр всех заявок", 
+         "description": "Разрешение на просмотр всех заявок в системе", "category": "applications"},
+        {"name": "client-service.applications.view.own", "displayName": "Просмотр своих заявок", 
+         "description": "Разрешение на просмотр только своих заявок", "category": "applications"},
         {"name": "client-service.applications.create", "displayName": "Создание заявок",
          "description": "Разрешение на создание новых заявок", "category": "applications"},
         {"name": "client-service.applications.edit", "displayName": "Редактирование заявок",
@@ -143,7 +144,7 @@ class SQLPagination:
 
 
 @main.route('/')
-@auth_required(permission='client-service.applications.view')
+@auth_required(any_of=['client-service.applications.view.all', 'client-service.applications.view.own'])
 def index():
     page = request.args.get('page', 1, type=int)
     search_query = request.args.get('search', '')
@@ -217,7 +218,7 @@ def index():
 
 
 @main.route('/client/<int:client_id>')
-@auth_required(permission='client-service.applications.view')
+@auth_required(any_of=['client-service.applications.view.all', 'client-service.applications.view.own'])
 def client_card(client_id):
     contact = EstateDealsContacts.query.get_or_404(client_id)
     deals_for_client = contact.deals.options(selectinload(EstateDeals.sell).selectinload(EstateSells.house)).all()
@@ -264,13 +265,30 @@ def export_applications():
         joinedload(Application.defects)
     )
 
-    # Фильтрация заявок в зависимости от роли
-    if not gateway_has_role('Админ'):
-        created_by_me = Application.creator_id == current_user.id if current_user and current_user.is_authenticated else False
-        responsible_for = Application.responsible_person_id == (
-            current_user.responsible_person_profile.id if (current_user and current_user.is_authenticated and current_user.responsible_person_profile) else -1
-        )
-        query = query.filter(or_(created_by_me, responsible_for))
+    # Фильтрация заявок в зависимости от разрешений
+    from .auth_utils import has_permission, get_current_user_id
+    from .models import User as LocalUser
+    
+    # Если нет разрешения на просмотр ВСЕХ заявок, показываем только свои
+    if not has_permission('client-service.applications.view.all'):
+        current_gateway_user_id = get_current_user_id()
+        
+        if current_gateway_user_id:
+            # Находим локального пользователя по gateway ID
+            local_user = LocalUser.query.filter_by(auth_user_id=current_gateway_user_id).first()
+            
+            if local_user:
+                created_by_me = Application.creator_id == local_user.id
+                responsible_for = Application.responsible_person_id == (
+                    local_user.responsible_person_profile.id if local_user.responsible_person_profile else -1
+                )
+                query = query.filter(or_(created_by_me, responsible_for))
+            else:
+                # Если пользователь не найден в локальной БД, показываем пустой список
+                query = query.filter(Application.id == -1)
+        else:
+            # Если нет gateway user ID, показываем пустой список
+            query = query.filter(Application.id == -1)
     
     # Применяем те же фильтры, что и в основном маршруте
     status = request.args.get('status', '')
@@ -474,7 +492,7 @@ def export_applications():
 
 
 @main.route('/applications')
-@auth_required(permission='client-service.applications.view')
+@auth_required(any_of=['client-service.applications.view.all', 'client-service.applications.view.own'])
 def applications():
     page = request.args.get('page', 1, type=int)
 
@@ -485,18 +503,34 @@ def applications():
         joinedload(Application.creator)
     )
 
-    # Фильтрация заявок в зависимости от роли
-    if not gateway_has_role('Админ'):
-        # Пользователь видит заявки, которые он создал
-        created_by_me = Application.creator_id == current_user.id if current_user and current_user.is_authenticated else False
-
-        # Пользователь видит заявки, где он - ответственный
-        # (через связь User -> ResponsiblePerson)
-        responsible_for = Application.responsible_person_id == (
-            current_user.responsible_person_profile.id if (current_user and current_user.is_authenticated and current_user.responsible_person_profile) else -1
-        )
-
-        query = query.filter(or_(created_by_me, responsible_for))
+    # Фильтрация заявок в зависимости от разрешений
+    from .auth_utils import has_permission, get_current_user_id
+    from .models import User as LocalUser
+    
+    # Если нет разрешения на просмотр ВСЕХ заявок, показываем только свои
+    if not has_permission('client-service.applications.view.all'):
+        current_gateway_user_id = get_current_user_id()
+        
+        if current_gateway_user_id:
+            # Находим локального пользователя по gateway ID
+            local_user = LocalUser.query.filter_by(auth_user_id=current_gateway_user_id).first()
+            
+            if local_user:
+                # Пользователь видит заявки, которые он создал
+                created_by_me = Application.creator_id == local_user.id
+                
+                # Пользователь видит заявки, где он - ответственный
+                responsible_for = Application.responsible_person_id == (
+                    local_user.responsible_person_profile.id if local_user.responsible_person_profile else -1
+                )
+                
+                query = query.filter(or_(created_by_me, responsible_for))
+            else:
+                # Если пользователь не найден в локальной БД, показываем пустой список
+                query = query.filter(Application.id == -1)
+        else:
+            # Если нет gateway user ID, показываем пустой список
+            query = query.filter(Application.id == -1)
     
     # Применяем фильтры
     # Фильтр по статусу
@@ -978,19 +1012,28 @@ def get_responsible_persons():
 @auth_required(permission='client-service.applications.status.change')
 def update_application_status(app_id):
     app = Application.query.get_or_404(app_id)
-    is_admin = gateway_has_role('Админ')
-    # Проверяем, привязан ли текущий пользователь к ответственному по этой заявке
-    is_responsible = (current_user and current_user.is_authenticated and current_user.responsible_person_profile and
-                      current_user.responsible_person_profile.id == app.responsible_person_id)
+    
+    from .auth_utils import has_permission, get_current_user_id
+    from .models import User as LocalUser
+    
+    # Проверяем права доступа
+    has_admin_rights = has_permission('client-service.applications.view.all')
+    
+    # Проверяем, является ли пользователь ответственным по этой заявке
+    is_responsible = False
+    current_gateway_user_id = get_current_user_id()
+    if current_gateway_user_id:
+        local_user = LocalUser.query.filter_by(auth_user_id=current_gateway_user_id).first()
+        if local_user and local_user.responsible_person_profile:
+            is_responsible = local_user.responsible_person_profile.id == app.responsible_person_id
 
-    # ИСПРАВЛЕНИЕ: Разрешаем изменение статуса администраторам и ответственным
     # Для заявок без договора (NC-xxx или старый SYSTEM-001) разрешаем всем пользователям с правами доступа
     is_no_contract = (app.agreement_number and 
                       (app.agreement_number.startswith('NC-') or 
                        app.agreement_number == 'SYSTEM-001' or
                        app.client.contacts_buy_name == "СИСТЕМНЫЙ КЛИЕНТ (для заявок без договора)"))
     
-    if not (is_admin or is_responsible or is_no_contract):
+    if not (has_admin_rights or is_responsible or is_no_contract):
         abort(403)  # Forbidden
 
     new_status, comment = request.form.get('status'), request.form.get('comment')

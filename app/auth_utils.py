@@ -110,6 +110,21 @@ def has_permission(permission_name):
     return permission_name in permissions
 
 
+def has_any_permission(*permission_names):
+    """
+    Проверяет наличие хотя бы одного из указанных разрешений у текущего пользователя.
+    
+    Args:
+        *permission_names: Названия разрешений для проверки
+        
+    Returns:
+        bool: True если есть хотя бы одно из разрешений
+    """
+    permissions = g.get('service_permissions', [])
+    return any(perm in permissions for perm in permission_names)
+
+
+
 def has_any_permission(permission_list):
     """
     Проверяет наличие хотя бы одного разрешения из списка.

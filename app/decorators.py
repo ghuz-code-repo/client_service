@@ -2,16 +2,17 @@
 from functools import wraps
 from flask import g, redirect, url_for, flash, abort
 from flask_login import current_user
-from app.auth_utils import is_admin as gateway_is_admin, has_permission
+from app.auth_utils import is_admin as gateway_is_admin, has_permission, has_any_permission
 
 
-def auth_required(permission=None):
+def auth_required(permission=None, any_of=None):
     """
     Гибридный декоратор: проверяет Flask-Login ИЛИ Gateway auth.
     Используется вместо @login_required
     
     Args:
         permission (str, optional): Разрешение для проверки (например, 'client-service.admin.users')
+        any_of (list, optional): Список разрешений, хотя бы одно из которых должно быть у пользователя
     """
     def decorator(f):
         @wraps(f)
@@ -21,12 +22,15 @@ def auth_required(permission=None):
                 # Проверяем разрешение если указано
                 if permission and not has_permission(permission):
                     abort(403)
+                # Проверяем список разрешений (любое из)
+                if any_of and not has_any_permission(*any_of):
+                    abort(403)
                 return f(*args, **kwargs)
             
             # Способ 2: Flask-Login (fallback)
             if current_user.is_authenticated:
                 # Для Flask-Login проверяем роль админа если нужно разрешение
-                if permission and current_user.role != 'Админ':
+                if (permission or any_of) and current_user.role != 'Админ':
                     abort(403)
                 return f(*args, **kwargs)
             

@@ -15,7 +15,7 @@
 <div class="card shadow-sm mb-4 animate-on-scroll" style="animation-delay: 0.1s;">
     <div class="card-header bg-light d-flex justify-content-between align-items-center">
         <h1 class="card-title h3 mb-0">Карточка клиента</h1>
-        {% if gateway_has_role('Админ') and client_comment is defined %}
+        {% if gateway_has_permission('client-service.admin.users') and client_comment is defined %}
         <button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#editClientCommentModal">
             <i class="bi bi-pencil"></i> Редактировать комментарий
         </button>
@@ -148,7 +148,7 @@
                         <td class="text-end">
                             {% set is_responsible = (current_user.responsible_person_profile and current_user.responsible_person_profile.id == app.responsible_person_id) if current_user and current_user.is_authenticated else false %}
                             {% set is_no_contract = app.agreement_number and (app.agreement_number.startswith('NC-') or app.agreement_number == 'SYSTEM-001' or client.fio == "СИСТЕМНЫЙ КЛИЕНТ (для заявок без договора)") %}
-                            {% set can_edit = gateway_has_role('Админ') or is_responsible or (is_no_contract and gateway_has_role('Специалист КЦ', 'Менеджер ДКС', 'Менеджер отдела оформления', 'Менеджер ОГР')) %}
+                            {% set can_edit = gateway_has_permission('client-service.applications.status.change') and (gateway_has_permission('client-service.applications.view.all') or is_responsible or is_no_contract) %}
                             {% if can_edit %}
                             <button class="btn btn-sm btn-outline-dark" data-bs-toggle="modal" data-bs-target="#editStatusModal" data-app-id="{{ app.id }}" data-app-status="{{ app.status }}">
                                 <i class="bi bi-pencil-square"></i> Редактировать
@@ -269,7 +269,7 @@
 </div>
 
 <!-- Модальное окно редактирования комментария клиента -->
-{% if gateway_has_role('Админ') %}
+{% if gateway_has_permission('client-service.admin.users') %}
 <div class="modal fade" id="editClientCommentModal" tabindex="-1" aria-labelledby="editClientCommentModalLabel" aria-hidden="true">
   <div class="modal-dialog">
     <div class="modal-content">

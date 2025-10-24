@@ -148,7 +148,7 @@
                             <li class="nav-item"><a class="nav-link {% if request.endpoint == 'main.index' %}active{% endif %}" href="{{ url_for('main.index') }}">Клиенты</a></li>
                             <li class="nav-item"><a class="nav-link {% if request.endpoint == 'main.applications' %}active{% endif %}" href="{{ url_for('main.applications') }}">Заявки</a></li>
 
-                            {% if gateway_is_admin() or gateway_has_permission('client-service.admin.panel') %}
+                            {% if gateway_has_permission('client-service.admin.panel') %}
                             <li class="nav-item"><a class="nav-link {% if request.endpoint == 'main.responsible_persons' %}active{% endif %}" href="{{ url_for('main.responsible_persons') }}">Ответственные</a></li>
                             <li class="nav-item"><a class="nav-link {% if request.endpoint == 'main.upload_deadlines' %}active{% endif %}" href="{{ url_for('main.upload_deadlines') }}">Загрузка сроков</a></li>
                             <li class="nav-item"><a class="nav-link {% if request.endpoint == 'main.email_logs' %}active{% endif %}" href="{{ url_for('main.email_logs') }}">Email Логи</a></li>
@@ -191,7 +191,7 @@
             </div>
         </nav>
 
-        {% if gateway_is_authenticated() and (gateway_is_admin() or gateway_has_permission('client-service.admin.panel')) %}
+        {% if gateway_is_authenticated() and gateway_has_permission('client-service.admin.panel') %}
         <div class="collapse sub-nav-wrapper" id="subnavCollapse">
             <div class="sub-nav-inner">
                 <div class="container d-flex justify-content-center sub-nav-content">
