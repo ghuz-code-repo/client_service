@@ -620,6 +620,8 @@ def applications():
 @main.route('/client/<int:client_id>/application/create', methods=['POST'])
 @auth_required(permission='client-service.applications.create')
 def create_application(client_id):
+    from .auth_utils import get_current_user_id
+    
     contact = EstateDealsContacts.query.get_or_404(client_id)
     form_data = request.form
     application_type_name = form_data.get('application_type')
@@ -738,6 +740,8 @@ def get_or_create_system_client():
 @auth_required(permission='client-service.applications.create')
 def create_general_application():
     """Создание заявки без договора - создает нового клиента"""
+    from .auth_utils import get_current_user_id
+    
     form_data = request.form
     
     # Получаем данные из формы
