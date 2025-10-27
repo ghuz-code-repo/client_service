@@ -279,8 +279,11 @@ def export_applications():
             
             if local_user:
                 created_by_me = Application.creator_id == local_user.id
+                
+                # Находим ResponsiblePerson по gateway_user_id
+                responsible_person = ResponsiblePerson.query.filter_by(gateway_user_id=current_gateway_user_id).first()
                 responsible_for = Application.responsible_person_id == (
-                    local_user.responsible_person_profile.id if local_user.responsible_person_profile else -1
+                    responsible_person.id if responsible_person else -1
                 )
                 query = query.filter(or_(created_by_me, responsible_for))
             else:
@@ -519,9 +522,10 @@ def applications():
                 # Пользователь видит заявки, которые он создал
                 created_by_me = Application.creator_id == local_user.id
                 
-                # Пользователь видит заявки, где он - ответственный
+                # Находим ResponsiblePerson по gateway_user_id
+                responsible_person = ResponsiblePerson.query.filter_by(gateway_user_id=current_gateway_user_id).first()
                 responsible_for = Application.responsible_person_id == (
-                    local_user.responsible_person_profile.id if local_user.responsible_person_profile else -1
+                    responsible_person.id if responsible_person else -1
                 )
                 
                 query = query.filter(or_(created_by_me, responsible_for))
@@ -1082,9 +1086,10 @@ def update_application_status(app_id):
     is_responsible = False
     current_gateway_user_id = get_current_user_id()
     if current_gateway_user_id:
-        local_user = LocalUser.query.filter_by(auth_user_id=current_gateway_user_id).first()
-        if local_user and local_user.responsible_person_profile:
-            is_responsible = local_user.responsible_person_profile.id == app.responsible_person_id
+        # Находим ResponsiblePerson по gateway_user_id
+        responsible_person = ResponsiblePerson.query.filter_by(gateway_user_id=current_gateway_user_id).first()
+        if responsible_person:
+            is_responsible = responsible_person.id == app.responsible_person_id
 
     # Для заявок без договора (NC-xxx или старый SYSTEM-001) разрешаем всем пользователям с правами доступа
     is_no_contract = (app.agreement_number and 
