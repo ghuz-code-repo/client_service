@@ -621,6 +621,33 @@ def applications():
 @auth_required(permission='client-service.applications.create')
 def create_application(client_id):
     from .auth_utils import get_current_user_id
+    from .models import User as LocalUser
+    
+    # Получаем локального пользователя для creator_id
+    gateway_user_id = get_current_user_id()
+    local_user = None
+    
+    if gateway_user_id:
+        local_user = LocalUser.query.filter_by(auth_user_id=gateway_user_id).first()
+        
+        # Если локальный пользователь не найден, создаем его
+        if not local_user:
+            from flask import g
+            username = g.get('username', 'unknown')
+            role = 'Специалист КЦ'  # роль по умолчанию
+            
+            if g.get('is_admin'):
+                role = 'Админ'
+            
+            local_user = LocalUser(
+                username=username,
+                auth_user_id=gateway_user_id,
+                role=role
+            )
+            db.session.add(local_user)
+            db.session.flush()  # Получаем ID без коммита
+    
+    creator_local_id = local_user.id if local_user else None
     
     contact = EstateDealsContacts.query.get_or_404(client_id)
     form_data = request.form
@@ -652,7 +679,7 @@ def create_application(client_id):
     new_app = Application(client_id=client_id, agreement_number=agreement_number,
                           application_type=application_type_name,
                           comment=comment, responsible_person_id=responsible_person_id,
-                          creator_id=get_current_user_id(), due_date=due_date, source=source)
+                          creator_id=creator_local_id, due_date=due_date, source=source)
     db.session.add(new_app)
 
     defects_data = {}
@@ -677,7 +704,7 @@ def create_application(client_id):
 
     db.session.add(ApplicationLog(application=new_app, action="Заявка создана",
                                   comment=f"Назначен ответственный: {ResponsiblePerson.query.get(responsible_person_id).full_name}",
-                                  author_id=get_current_user_id()))
+                                  author_id=creator_local_id))
 
     try:
         db.session.commit()
@@ -741,6 +768,34 @@ def get_or_create_system_client():
 def create_general_application():
     """Создание заявки без договора - создает нового клиента"""
     from .auth_utils import get_current_user_id
+    from .models import User as LocalUser
+    
+    # Получаем локального пользователя для creator_id
+    gateway_user_id = get_current_user_id()
+    local_user = None
+    
+    if gateway_user_id:
+        local_user = LocalUser.query.filter_by(auth_user_id=gateway_user_id).first()
+        
+        # Если локальный пользователь не найден, создаем его
+        if not local_user:
+            from flask import g
+            username = g.get('username', 'unknown')
+            role = 'Специалист КЦ'  # роль по умолчанию
+            
+            if g.get('is_admin'):
+                role = 'Админ'
+            
+            local_user = LocalUser(
+                username=username,
+                auth_user_id=gateway_user_id,
+                role=role
+            )
+            db.session.add(local_user)
+            db.session.flush()  # Получаем ID без коммита
+    
+    creator_local_id = local_user.id if local_user else None
+
     
     form_data = request.form
     
@@ -826,7 +881,7 @@ def create_general_application():
         application_type=application_type_name,
         comment=comment, 
         responsible_person_id=responsible_person_id,
-        creator_id=get_current_user_id(), 
+        creator_id=creator_local_id, 
         due_date=due_date, 
         source=source,
         housing_complex=housing_complex if housing_complex else None,
@@ -861,7 +916,7 @@ def create_general_application():
         application=new_app, 
         action="Заявка создана (без договора)",
         comment=f"Создан новый клиент: {contact_name}. Назначен ответственный: {ResponsiblePerson.query.get(responsible_person_id).full_name}",
-        author_id=get_current_user_id()
+        author_id=creator_local_id
     ))
 
     try:
