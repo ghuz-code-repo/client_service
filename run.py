@@ -137,9 +137,15 @@ def initialize_app():
             
             # Заявки (Applications)
             registry.register(
-                "client-service.applications.view",
-                "Просмотр заявок",
-                "Разрешение на просмотр всех заявок",
+                "client-service.applications.view.all",
+                "Просмотр всех заявок",
+                "Разрешение на просмотр всех заявок в системе",
+                "applications"
+            )
+            registry.register(
+                "client-service.applications.view.own",
+                "Просмотр своих заявок",
+                "Разрешение на просмотр только своих заявок",
                 "applications"
             )
             registry.register(
