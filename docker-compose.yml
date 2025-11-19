@@ -17,9 +17,9 @@ services:
     environment:
       - AUTH_SERVICE_URL=http://auth-service:80
       - NOTIFICATION_SERVICE_URL=http://notification-service:80
+      - CONTAINER_NAME=client-service-service  # For service discovery registration
     networks:
       - service_network     # Внутренняя сеть сервисов
-      - data_network        # Для доступа к MongoDB Gateway (временно для миграции)
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:80/health', timeout=5)"]
       interval: 30s

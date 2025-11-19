@@ -1,0 +1,40 @@
+# Exclude local auth-connector copy (use centralized version from parent)
+auth-connector/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Git
+.git/
+.gitignore
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Instance and data
+instance/*.db
+*.log
+
+# Documentation
+*.md
+!README.md

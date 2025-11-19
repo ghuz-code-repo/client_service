@@ -79,7 +79,9 @@ def background_sync_task(app_context):
 # Префикс нужен только для генерации внешних URL, но не для внутренней маршрутизации
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=0)
 
-if __name__ == '__main__':
+# Initialization function (called both from Gunicorn and direct run)
+def initialize_app():
+    """Initialize database, run migrations, and setup auth connector"""
     # 1. Создаем локальную базу данных и таблицы (если их нет)
     create_database(app)
     
@@ -275,8 +277,12 @@ if __name__ == '__main__':
     sync_thread.daemon = True  # Поток завершится при выходе из основного приложения
     sync_thread.start()
 
-    # 5. Запускаем веб-приложение Flask
+# Initialize app when module is loaded (for Gunicorn)
+initialize_app()
+
+if __name__ == '__main__':
+    # 5. Запускаем веб-приложение Flask (только при прямом запуске)
     print("\nЗапуск веб-приложения Flask...")
     # Для production используйте Gunicorn или другой WSGI-сервер
     # use_reloader=False чтобы избежать двойного запуска синхронизации
-    app.run(host='0.0.0.0', port=80, debug=app.config.get('DEBUG', True), use_reloader=False)
+    app.run(host='0.0.0.0', port=80, debug=False, use_reloader=False)
