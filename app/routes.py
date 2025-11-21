@@ -44,7 +44,9 @@ def sync_permissions():
         {"name": "client-service.applications.view.all", "displayName": "Просмотр всех заявок", 
          "description": "Разрешение на просмотр всех заявок в системе", "category": "applications"},
         {"name": "client-service.applications.view.own", "displayName": "Просмотр своих заявок", 
-         "description": "Разрешение на просмотр только своих заявок", "category": "applications"},
+         "description": "Разрешение на просмотр только созданных пользователем заявок", "category": "applications"},
+        {"name": "client-service.applications.view.responsible", "displayName": "Просмотр заявок где ответственный", 
+         "description": "Разрешение на просмотр заявок где пользователь назначен ответственным", "category": "applications"},
         {"name": "client-service.applications.create", "displayName": "Создание заявок",
          "description": "Разрешение на создание новых заявок", "category": "applications"},
         {"name": "client-service.applications.edit", "displayName": "Редактирование заявок",
@@ -144,7 +146,7 @@ class SQLPagination:
 
 
 @main.route('/')
-@auth_required(any_of=['client-service.applications.view.all', 'client-service.applications.view.own'])
+@auth_required(any_of=['client-service.applications.view.all', 'client-service.applications.view.own', 'client-service.applications.view.responsible'])
 def index():
     page = request.args.get('page', 1, type=int)
     search_query = request.args.get('search', '')
@@ -218,7 +220,7 @@ def index():
 
 
 @main.route('/client/<int:client_id>')
-@auth_required(any_of=['client-service.applications.view.all', 'client-service.applications.view.own'])
+@auth_required(any_of=['client-service.applications.view.all', 'client-service.applications.view.own', 'client-service.applications.view.responsible'])
 def client_card(client_id):
     contact = EstateDealsContacts.query.get_or_404(client_id)
     deals_for_client = contact.deals.options(selectinload(EstateDeals.sell).selectinload(EstateSells.house)).all()
@@ -269,7 +271,7 @@ def export_applications():
     from .auth_utils import has_permission, get_current_user_id
     from .models import User as LocalUser
     
-    # Если нет разрешения на просмотр ВСЕХ заявок, показываем только свои
+    # Если нет разрешения на просмотр ВСЕХ заявок, фильтруем по другим разрешениям
     if not has_permission('client-service.applications.view.all'):
         current_gateway_user_id = get_current_user_id()
         
@@ -278,14 +280,24 @@ def export_applications():
             local_user = LocalUser.query.filter_by(auth_user_id=current_gateway_user_id).first()
             
             if local_user:
-                created_by_me = Application.creator_id == local_user.id
+                filter_conditions = []
                 
-                # Находим ResponsiblePerson по gateway_user_id
-                responsible_person = ResponsiblePerson.query.filter_by(gateway_user_id=current_gateway_user_id).first()
-                responsible_for = Application.responsible_person_id == (
-                    responsible_person.id if responsible_person else -1
-                )
-                query = query.filter(or_(created_by_me, responsible_for))
+                # Проверяем разрешение на просмотр своих заявок
+                if has_permission('client-service.applications.view.own'):
+                    filter_conditions.append(Application.creator_id == local_user.id)
+                
+                # Проверяем разрешение на просмотр заявок где ответственный
+                if has_permission('client-service.applications.view.responsible'):
+                    responsible_person = ResponsiblePerson.query.filter_by(gateway_user_id=current_gateway_user_id).first()
+                    if responsible_person:
+                        filter_conditions.append(Application.responsible_person_id == responsible_person.id)
+                
+                # Применяем фильтры если есть разрешения
+                if filter_conditions:
+                    query = query.filter(or_(*filter_conditions))
+                else:
+                    # Нет ни одного разрешения на просмотр
+                    query = query.filter(Application.id == -1)
             else:
                 # Если пользователь не найден в локальной БД, показываем пустой список
                 query = query.filter(Application.id == -1)
@@ -495,7 +507,7 @@ def export_applications():
 
 
 @main.route('/applications')
-@auth_required(any_of=['client-service.applications.view.all', 'client-service.applications.view.own'])
+@auth_required(any_of=['client-service.applications.view.all', 'client-service.applications.view.own', 'client-service.applications.view.responsible'])
 def applications():
     page = request.args.get('page', 1, type=int)
 
@@ -510,7 +522,7 @@ def applications():
     from .auth_utils import has_permission, get_current_user_id
     from .models import User as LocalUser
     
-    # Если нет разрешения на просмотр ВСЕХ заявок, показываем только свои
+    # Если нет разрешения на просмотр ВСЕХ заявок, фильтруем по другим разрешениям
     if not has_permission('client-service.applications.view.all'):
         current_gateway_user_id = get_current_user_id()
         
@@ -519,16 +531,24 @@ def applications():
             local_user = LocalUser.query.filter_by(auth_user_id=current_gateway_user_id).first()
             
             if local_user:
-                # Пользователь видит заявки, которые он создал
-                created_by_me = Application.creator_id == local_user.id
+                filter_conditions = []
                 
-                # Находим ResponsiblePerson по gateway_user_id
-                responsible_person = ResponsiblePerson.query.filter_by(gateway_user_id=current_gateway_user_id).first()
-                responsible_for = Application.responsible_person_id == (
-                    responsible_person.id if responsible_person else -1
-                )
+                # Проверяем разрешение на просмотр своих заявок
+                if has_permission('client-service.applications.view.own'):
+                    filter_conditions.append(Application.creator_id == local_user.id)
                 
-                query = query.filter(or_(created_by_me, responsible_for))
+                # Проверяем разрешение на просмотр заявок где ответственный
+                if has_permission('client-service.applications.view.responsible'):
+                    responsible_person = ResponsiblePerson.query.filter_by(gateway_user_id=current_gateway_user_id).first()
+                    if responsible_person:
+                        filter_conditions.append(Application.responsible_person_id == responsible_person.id)
+                
+                # Применяем фильтры если есть разрешения
+                if filter_conditions:
+                    query = query.filter(or_(*filter_conditions))
+                else:
+                    # Нет ни одного разрешения на просмотр
+                    query = query.filter(Application.id == -1)
             else:
                 # Если пользователь не найден в локальной БД, показываем пустой список
                 query = query.filter(Application.id == -1)
