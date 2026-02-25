@@ -3,3 +3,4 @@
 *.db
 app/__pycache__/routes.cpython-313.pyc
 app/word_templates/*
+app/__pycache__/*

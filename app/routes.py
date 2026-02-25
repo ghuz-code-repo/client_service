@@ -11,7 +11,6 @@ from openpyxl.cell import MergedCell
 from openpyxl.styles import Font, Alignment
 from flask import (render_template, request, Blueprint, abort, flash, redirect,
                    url_for, jsonify, current_app, send_file, g)
-from flask_login import current_user  # Keep for backward compatibility during migration
 from sqlalchemy.orm import selectinload, joinedload
 from sqlalchemy import text
 from flask_mail import Message
@@ -268,41 +267,29 @@ def export_applications():
     )
 
     # Фильтрация заявок в зависимости от разрешений
-    from .auth_utils import has_permission, get_current_user_id
-    from .models import User as LocalUser
+    from .auth_utils import has_permission, get_current_user_id, get_or_create_local_user
     
     # Если нет разрешения на просмотр ВСЕХ заявок, фильтруем по другим разрешениям
     if not has_permission('client-service.applications.view.all'):
         current_gateway_user_id = get_current_user_id()
+        local_user = get_or_create_local_user(commit=True) if current_gateway_user_id else None
         
-        if current_gateway_user_id:
-            # Находим локального пользователя по gateway ID
-            local_user = LocalUser.query.filter_by(auth_user_id=current_gateway_user_id).first()
+        if local_user:
+            filter_conditions = []
             
-            if local_user:
-                filter_conditions = []
-                
-                # Проверяем разрешение на просмотр своих заявок
-                if has_permission('client-service.applications.view.own'):
-                    filter_conditions.append(Application.creator_id == local_user.id)
-                
-                # Проверяем разрешение на просмотр заявок где ответственный
-                if has_permission('client-service.applications.view.responsible'):
-                    responsible_person = ResponsiblePerson.query.filter_by(gateway_user_id=current_gateway_user_id).first()
-                    if responsible_person:
-                        filter_conditions.append(Application.responsible_person_id == responsible_person.id)
-                
-                # Применяем фильтры если есть разрешения
-                if filter_conditions:
-                    query = query.filter(or_(*filter_conditions))
-                else:
-                    # Нет ни одного разрешения на просмотр
-                    query = query.filter(Application.id == -1)
+            if has_permission('client-service.applications.view.own'):
+                filter_conditions.append(Application.creator_id == local_user.id)
+            
+            if has_permission('client-service.applications.view.responsible'):
+                responsible_person = ResponsiblePerson.query.filter_by(gateway_user_id=current_gateway_user_id).first()
+                if responsible_person:
+                    filter_conditions.append(Application.responsible_person_id == responsible_person.id)
+            
+            if filter_conditions:
+                query = query.filter(or_(*filter_conditions))
             else:
-                # Если пользователь не найден в локальной БД, показываем пустой список
                 query = query.filter(Application.id == -1)
         else:
-            # Если нет gateway user ID, показываем пустой список
             query = query.filter(Application.id == -1)
     
     # Применяем те же фильтры, что и в основном маршруте
@@ -519,41 +506,29 @@ def applications():
     )
 
     # Фильтрация заявок в зависимости от разрешений
-    from .auth_utils import has_permission, get_current_user_id
-    from .models import User as LocalUser
+    from .auth_utils import has_permission, get_current_user_id, get_or_create_local_user
     
     # Если нет разрешения на просмотр ВСЕХ заявок, фильтруем по другим разрешениям
     if not has_permission('client-service.applications.view.all'):
         current_gateway_user_id = get_current_user_id()
+        local_user = get_or_create_local_user(commit=True) if current_gateway_user_id else None
         
-        if current_gateway_user_id:
-            # Находим локального пользователя по gateway ID
-            local_user = LocalUser.query.filter_by(auth_user_id=current_gateway_user_id).first()
+        if local_user:
+            filter_conditions = []
             
-            if local_user:
-                filter_conditions = []
-                
-                # Проверяем разрешение на просмотр своих заявок
-                if has_permission('client-service.applications.view.own'):
-                    filter_conditions.append(Application.creator_id == local_user.id)
-                
-                # Проверяем разрешение на просмотр заявок где ответственный
-                if has_permission('client-service.applications.view.responsible'):
-                    responsible_person = ResponsiblePerson.query.filter_by(gateway_user_id=current_gateway_user_id).first()
-                    if responsible_person:
-                        filter_conditions.append(Application.responsible_person_id == responsible_person.id)
-                
-                # Применяем фильтры если есть разрешения
-                if filter_conditions:
-                    query = query.filter(or_(*filter_conditions))
-                else:
-                    # Нет ни одного разрешения на просмотр
-                    query = query.filter(Application.id == -1)
+            if has_permission('client-service.applications.view.own'):
+                filter_conditions.append(Application.creator_id == local_user.id)
+            
+            if has_permission('client-service.applications.view.responsible'):
+                responsible_person = ResponsiblePerson.query.filter_by(gateway_user_id=current_gateway_user_id).first()
+                if responsible_person:
+                    filter_conditions.append(Application.responsible_person_id == responsible_person.id)
+            
+            if filter_conditions:
+                query = query.filter(or_(*filter_conditions))
             else:
-                # Если пользователь не найден в локальной БД, показываем пустой список
                 query = query.filter(Application.id == -1)
         else:
-            # Если нет gateway user ID, показываем пустой список
             query = query.filter(Application.id == -1)
     
     # Применяем фильтры
@@ -644,33 +619,9 @@ def applications():
 @main.route('/client/<int:client_id>/application/create', methods=['POST'])
 @auth_required(permission='client-service.applications.create')
 def create_application(client_id):
-    from .auth_utils import get_current_user_id
-    from .models import User as LocalUser
+    from .auth_utils import get_or_create_local_user
     
-    # Получаем локального пользователя для creator_id
-    gateway_user_id = get_current_user_id()
-    local_user = None
-    
-    if gateway_user_id:
-        local_user = LocalUser.query.filter_by(auth_user_id=gateway_user_id).first()
-        
-        # Если локальный пользователь не найден, создаем его
-        if not local_user:
-            from flask import g
-            username = g.get('username', 'unknown')
-            role = 'Специалист КЦ'  # роль по умолчанию
-            
-            if g.get('is_admin'):
-                role = 'Админ'
-            
-            local_user = LocalUser(
-                username=username,
-                auth_user_id=gateway_user_id,
-                role=role
-            )
-            db.session.add(local_user)
-            db.session.flush()  # Получаем ID без коммита
-    
+    local_user = get_or_create_local_user()
     creator_local_id = local_user.id if local_user else None
     
     contact = EstateDealsContacts.query.get_or_404(client_id)
@@ -755,12 +706,18 @@ def get_or_create_system_client():
     
     if not system_client:
         print("INFO: Системный клиент не найден. Создаем автоматически...")
+        
+        # Генерируем отрицательный ID, чтобы не конфликтовать с MySQL ID
+        min_contact_id = db.session.query(db.func.min(EstateDealsContacts.id)).scalar() or 0
+        new_client_id = min(min_contact_id, 0) - 1
+        
         system_client = EstateDealsContacts(
+            id=new_client_id,
             contacts_buy_name="СИСТЕМНЫЙ КЛИЕНТ (для заявок без договора)",
             contacts_buy_phones="000-00-00"
         )
         db.session.add(system_client)
-        db.session.flush()  # Чтобы получить ID
+        db.session.flush()
         print(f"INFO: Создан системный клиент с ID: {system_client.id}")
         
         # Проверяем и создаем системный договор
@@ -771,7 +728,11 @@ def get_or_create_system_client():
         
         if not system_deal:
             from datetime import date
+            min_deal_id = db.session.query(db.func.min(EstateDeals.id)).scalar() or 0
+            new_deal_id = min(min_deal_id, 0) - 1
+            
             system_deal = EstateDeals(
+                id=new_deal_id,
                 agreement_number="SYSTEM-001",
                 contacts_buy_id=system_client.id,
                 deal_status_name="Системный",
@@ -791,33 +752,9 @@ def get_or_create_system_client():
 @auth_required(permission='client-service.applications.create')
 def create_general_application():
     """Создание заявки без договора - создает нового клиента"""
-    from .auth_utils import get_current_user_id
-    from .models import User as LocalUser
+    from .auth_utils import get_or_create_local_user
     
-    # Получаем локального пользователя для creator_id
-    gateway_user_id = get_current_user_id()
-    local_user = None
-    
-    if gateway_user_id:
-        local_user = LocalUser.query.filter_by(auth_user_id=gateway_user_id).first()
-        
-        # Если локальный пользователь не найден, создаем его
-        if not local_user:
-            from flask import g
-            username = g.get('username', 'unknown')
-            role = 'Специалист КЦ'  # роль по умолчанию
-            
-            if g.get('is_admin'):
-                role = 'Админ'
-            
-            local_user = LocalUser(
-                username=username,
-                auth_user_id=gateway_user_id,
-                role=role
-            )
-            db.session.add(local_user)
-            db.session.flush()  # Получаем ID без коммита
-    
+    local_user = get_or_create_local_user()
     creator_local_id = local_user.id if local_user else None
 
     
@@ -849,7 +786,12 @@ def create_general_application():
 
     # Создаем нового клиента для заявки без договора
     try:
+        # Генерируем отрицательный ID, чтобы не конфликтовать с MySQL ID при синхронизации
+        min_contact_id = db.session.query(db.func.min(EstateDealsContacts.id)).scalar() or 0
+        new_client_id = min(min_contact_id, 0) - 1
+        
         new_client = EstateDealsContacts(
+            id=new_client_id,
             contacts_buy_name=contact_name,
             contacts_buy_phones=contact_phone,
             client_comment=client_comment if client_comment else None
@@ -876,10 +818,15 @@ def create_general_application():
 
     # Создаем договор "без договора" для нового клиента
     try:
-        # Генерируем уникальный номер договора
-        agreement_number = f"NC-{new_client.id}"
+        # Генерируем уникальный номер договора (используем abs для читаемости)
+        agreement_number = f"NC-{abs(new_client.id)}"
+        
+        # Генерируем отрицательный ID для сделки
+        min_deal_id = db.session.query(db.func.min(EstateDeals.id)).scalar() or 0
+        new_deal_id = min(min_deal_id, 0) - 1
         
         new_deal = EstateDeals(
+            id=new_deal_id,
             contacts_buy_id=new_client.id,
             agreement_number=agreement_number,
             deal_status_name="Без договора",
@@ -1096,8 +1043,10 @@ def get_responsible_persons():
 def update_application_status(app_id):
     app = Application.query.get_or_404(app_id)
     
-    from .auth_utils import has_permission, get_current_user_id
-    from .models import User as LocalUser
+    from .auth_utils import has_permission, get_current_user_id, get_or_create_local_user
+    
+    # Получаем/создаём локального пользователя для author_id
+    local_user = get_or_create_local_user()
     
     # Проверяем права доступа
     has_admin_rights = has_permission('client-service.applications.view.all')
@@ -1141,7 +1090,7 @@ def update_application_status(app_id):
         app.completed_at = None
     
     log_entry = ApplicationLog(application=app, action=f"Статус изменен: {old_status} -> {new_status}", 
-                               comment=comment, author_id=get_current_user_id())
+                               comment=comment, author_id=local_user.id if local_user else None)
     db.session.add(log_entry)
     try:
         db.session.commit()

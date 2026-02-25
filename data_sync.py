@@ -55,8 +55,40 @@ def sync_data():
                     # ИСПРАВЛЕНИЕ: Для клиентов НЕ удаляем тех, кто создан локально для заявок без договора
                     if table_name == 'estate_deals_contacts':
                         print(f"   - Очистка таблицы {table_name} (сохраняя локальных клиентов)...")
-                        # Удаляем только тех клиентов, у которых НЕТ договоров с префиксом NC- или SYSTEM-001
-                        # Это сохранит клиентов, созданных локально для заявок без договора
+                        
+                        # Сначала негируем ID локальных NC-контактов (если ещё положительные)
+                        local_contacts_pos = con.execute(db.text('''
+                            SELECT DISTINCT c.id FROM estate_deals_contacts c
+                            JOIN estate_deals d ON d.contacts_buy_id = c.id
+                            WHERE (d.agreement_number LIKE 'NC-%' OR d.agreement_number = 'SYSTEM-001')
+                              AND c.id > 0
+                        ''')).fetchall()
+                        
+                        if local_contacts_pos:
+                            min_contact_id = con.execute(db.text(
+                                'SELECT MIN(id) FROM estate_deals_contacts WHERE id < 0'
+                            )).scalar() or 0
+                            next_neg_id = min(min_contact_id, 0) - 1
+                            
+                            for row in local_contacts_pos:
+                                old_cid = row[0]
+                                # Обновляем ID контакта
+                                con.execute(db.text(
+                                    'UPDATE estate_deals_contacts SET id = :new_id WHERE id = :old_id'
+                                ), {'new_id': next_neg_id, 'old_id': old_cid})
+                                # Обновляем FK в estate_deals
+                                con.execute(db.text(
+                                    'UPDATE estate_deals SET contacts_buy_id = :new_id WHERE contacts_buy_id = :old_id'
+                                ), {'new_id': next_neg_id, 'old_id': old_cid})
+                                # Обновляем FK в applications
+                                con.execute(db.text(
+                                    'UPDATE applications SET client_id = :new_id WHERE client_id = :old_id'
+                                ), {'new_id': next_neg_id, 'old_id': old_cid})
+                                next_neg_id -= 1
+                            
+                            print(f"   - Негировано {len(local_contacts_pos)} NC-контактов с положительными ID.")
+                        
+                        # Удаляем только НЕ-NC клиентов (с отрицательными ID контакты сохранятся)
                         con.execute(db.text('''
                             DELETE FROM estate_deals_contacts 
                             WHERE id NOT IN (
@@ -70,36 +102,33 @@ def sync_data():
                     elif table_name == 'estate_deals':
                         print(f"   - Очистка таблицы {table_name} (сохраняя договоры без договора)...")
                         
-                        # ИСПРАВЛЕНИЕ: Изменяем ID локальных договоров на отрицательные, чтобы избежать конфликтов
-                        # Сначала получаем список локальных договоров
+                        # Получаем NC/SYSTEM сделки с положительными ID
                         local_deals = con.execute(db.text('''
-                            SELECT id FROM estate_deals 
-                            WHERE agreement_number LIKE 'NC-%' 
-                               OR agreement_number = 'SYSTEM-001'
+                            SELECT id, contacts_buy_id FROM estate_deals 
+                            WHERE (agreement_number LIKE 'NC-%' 
+                               OR agreement_number = 'SYSTEM-001')
+                              AND id > 0
                         ''')).fetchall()
                         
-                        # Меняем ID на отрицательные (если еще не отрицательные)
-                        for deal in local_deals:
-                            if deal[0] > 0:
-                                new_id = -deal[0]
-                                # Обновляем ID в estate_deals
+                        # Генерируем последовательные отрицательные ID для сделок
+                        if local_deals:
+                            # Находим минимальный существующий отрицательный ID
+                            min_deal_id = con.execute(db.text(
+                                'SELECT MIN(id) FROM estate_deals WHERE id < 0'
+                            )).scalar() or 0
+                            next_neg_id = min(min_deal_id, 0) - 1
+                            
+                            for deal in local_deals:
                                 con.execute(db.text('''
                                     UPDATE estate_deals 
                                     SET id = :new_id 
                                     WHERE id = :old_id
-                                '''), {'new_id': new_id, 'old_id': deal[0]})
-                                
-                                # Обновляем ссылки в estate_deals_contacts
-                                con.execute(db.text('''
-                                    UPDATE estate_deals_contacts 
-                                    SET id = :new_id 
-                                    WHERE id = :old_id
-                                '''), {'new_id': new_id, 'old_id': deal[0]})
-                        
-                        if local_deals:
+                                '''), {'new_id': next_neg_id, 'old_id': deal[0]})
+                                next_neg_id -= 1
+                            
                             print(f"   - Изменено {len(local_deals)} локальных договоров на отрицательные ID.")
                         
-                        # Удаляем только договоры, которые НЕ являются локальными (NC-* и SYSTEM-001)
+                        # Удаляем только НЕ локальные договоры
                         con.execute(db.text('''
                             DELETE FROM estate_deals 
                             WHERE agreement_number NOT LIKE 'NC-%' 

@@ -2,19 +2,16 @@
 import datetime
 import json
 from .extensions import db
-from flask_login import UserMixin
 
-class User(UserMixin, db.Model):
+
+class User(db.Model):
     """
-    Модель пользователя для хранения локальных данных.
+    Модель-прослойка для связи gateway пользователей с локальными данными.
     
-    Примечание: Аутентификация и управление пользователями теперь 
-    осуществляется через Gateway auth-service.
+    Аутентификация и управление пользователями осуществляется через Gateway.
     Эта модель используется только для:
-    - Связи с существующими данными (Applications - creator_id)
-    - Хранения auth_user_id для сопоставления с Gateway
-    
-    ResponsiblePerson теперь использует gateway_user_id напрямую (не FK).
+    - FK-связей: Application.creator_id, ApplicationLog.author_id
+    - Маппинга gateway_user_id (MongoDB ObjectID) → local integer id
     """
     __tablename__ = 'users'
     id = db.Column(db.Integer, primary_key=True)

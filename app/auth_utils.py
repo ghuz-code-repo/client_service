@@ -10,15 +10,22 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def get_current_user_from_gateway():
+def get_or_create_local_user(commit=False):
     """
-    Получает текущего пользователя из заголовков gateway.
-    Создает или обновляет локальную запись в БД.
+    Единая точка входа для получения/создания локального пользователя 
+    на основе данных gateway.
+    
+    Ищет User по auth_user_id, fallback на username.
+    Создаёт нового если не найден.
+    Синхронизирует auth_user_id и role при необходимости.
+    
+    Args:
+        commit: Если True — делает commit. Если False — только flush 
+                (транзакция остаётся за вызывающим кодом).
     
     Returns:
-        User: Объект пользователя или None
+        User: Объект пользователя или None (если нет данных gateway)
     """
-    # Проверяем наличие данных от gateway
     if not g.get('auth_user_id') or not g.get('username'):
         logger.debug("No gateway headers found")
         return None
@@ -33,34 +40,44 @@ def get_current_user_from_gateway():
         
         # Создание нового пользователя
         if not user:
-            logger.info(f"Creating new user from gateway: {g.username}")
+            logger.info(f"Creating new local user from gateway: {g.username}")
             user = User(
                 auth_user_id=g.auth_user_id,
                 username=g.username,
                 role=_determine_role_from_permissions()
             )
-            # НЕ устанавливаем password_hash для gateway пользователей
             db.session.add(user)
-            db.session.commit()
-            logger.info(f"User created: {user.username} (id={user.id})")
+            if commit:
+                db.session.commit()
+            else:
+                db.session.flush()
+            logger.info(f"Local user created: {user.username} (id={user.id})")
+            return user
         
         # Обновление auth_user_id если его не было
-        if user and not user.auth_user_id and g.auth_user_id:
+        dirty = False
+        if not user.auth_user_id:
             logger.info(f"Updating auth_user_id for user {user.username}")
             user.auth_user_id = g.auth_user_id
-            db.session.commit()
+            dirty = True
         
         # Обновление роли на основе разрешений
         new_role = _determine_role_from_permissions()
         if user.role != new_role:
             logger.info(f"Updating role for user {user.username}: {user.role} → {new_role}")
             user.role = new_role
-            db.session.commit()
+            dirty = True
+        
+        if dirty:
+            if commit:
+                db.session.commit()
+            else:
+                db.session.flush()
         
         return user
         
     except Exception as e:
-        logger.error(f"Error getting user from gateway: {e}", exc_info=True)
+        logger.error(f"Error getting/creating local user: {e}", exc_info=True)
         db.session.rollback()
         return None
 
@@ -137,7 +154,6 @@ def is_admin():
 def is_authenticated():
     """
     Проверяет, аутентифицирован ли пользователь через Gateway.
-    Используется в шаблонах вместо current_user.is_authenticated.
     
     Returns:
         bool: True если пользователь аутентифицирован через Gateway
@@ -157,22 +173,12 @@ def get_current_username():
 
 def get_current_user_id():
     """
-    Возвращает ID текущего пользователя (работает с Gateway и Flask-Login).
-    Используйте эту функцию вместо current_user.id для совместимости.
+    Возвращает Gateway user ID текущего пользователя.
     
     Returns:
         str: Gateway user ID (MongoDB ObjectID) или None
     """
-    # Приоритет: Gateway authentication
-    if g.get('auth_user_id'):
-        return g.auth_user_id
-    
-    # Fallback: Flask-Login (для старых сессий)
-    from flask_login import current_user
-    if current_user.is_authenticated:
-        return current_user.auth_user_id or str(current_user.id)
-    
-    return None
+    return g.get('auth_user_id')
 
 
 def get_current_full_name():
@@ -206,8 +212,7 @@ def get_user_avatar_url():
 
 def has_role(*role_names):
     """
-    Проверяет наличие одной из указанных ролей у текущего пользователя.
-    Для обратной совместимости с current_user.has_role().
+    Проверяет наличие одной из указанных ролей у текущего пользователя (через Gateway).
     
     Args:
         *role_names: Названия ролей для проверки

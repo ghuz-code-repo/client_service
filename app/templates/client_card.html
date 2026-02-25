@@ -146,7 +146,7 @@
                             {% endif %}
                         </td>
                         <td class="text-end">
-                            {% set is_responsible = (current_user.responsible_person_profile and current_user.responsible_person_profile.id == app.responsible_person_id) if current_user and current_user.is_authenticated else false %}
+                            {% set is_responsible = gateway_has_role('client-service-manager') or gateway_has_permission('client-service.applications.view.responsible') %}
                             {% set is_no_contract = app.agreement_number and (app.agreement_number.startswith('NC-') or app.agreement_number == 'SYSTEM-001' or client.fio == "СИСТЕМНЫЙ КЛИЕНТ (для заявок без договора)") %}
                             {% set can_edit = gateway_has_permission('client-service.applications.status.change') and (gateway_has_permission('client-service.applications.view.all') or is_responsible or is_no_contract) %}
                             {% if can_edit %}

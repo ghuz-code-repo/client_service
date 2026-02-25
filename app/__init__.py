@@ -3,7 +3,7 @@ import datetime
 import os
 import base64
 from flask import Flask, g, request
-from .extensions import db, mail, login_manager, migrate
+from .extensions import db, mail, migrate
 from config import Config
 
 
@@ -24,7 +24,6 @@ def create_app(config_class=Config):
     # Инициализация расширений
     db.init_app(app)
     mail.init_app(app)
-    login_manager.init_app(app)
     migrate.init_app(app, db)  # Связываем Flask-Migrate с приложением и БД
 
     # ========== AUTH-CONNECTOR INTEGRATION ==========
@@ -33,7 +32,7 @@ def create_app(config_class=Config):
     def process_gateway_headers():
         """
         Обработка заголовков от gateway перед каждым запросом.
-        Работает параллельно с Flask-Login.
+        Аутентификация полностью через Gateway.
         """
         # Извлечение данных пользователя из заголовков
         g.auth_user_id = request.headers.get('X-User-ID')
@@ -96,14 +95,7 @@ def create_app(config_class=Config):
             is_admin as gateway_is_admin_func, 
             has_permission,
             has_role,
-            get_current_user_from_gateway
         )
-        from flask_login import current_user
-        
-        # Если пользователь не залогинен через Flask-Login, пытаемся получить из Gateway
-        gateway_user = None
-        if not current_user.is_authenticated:
-            gateway_user = get_current_user_from_gateway()
         
         return {
             'gateway_is_authenticated': is_authenticated,
@@ -113,7 +105,6 @@ def create_app(config_class=Config):
             'gateway_is_admin': gateway_is_admin_func,
             'gateway_has_permission': has_permission,
             'gateway_has_role': has_role,
-            'current_user': gateway_user if gateway_user else current_user  # Заменяем current_user на Gateway пользователя
         }
 
     # --- РЕГИСТРАЦИЯ CLI-КОМАНД ---
@@ -125,18 +116,6 @@ def create_app(config_class=Config):
         """Заполняет справочники начальными данными."""
         _populate_initial_data(app)
         print("SUCCESS: Команда 'init-db' выполнена.")
-
-    @app.cli.command("create-admin")
-    def create_admin_command():
-        """Создает пользователя admin по умолчанию."""
-        _create_default_admin(app)
-
-    # --- НАСТРОЙКА FLASK-LOGIN ---
-
-    @login_manager.user_loader
-    def load_user(user_id):
-        from .models import User
-        return User.query.get(int(user_id))
 
     # --- КОНТЕКСТНЫЙ ПРОЦЕССОР ---
 
@@ -170,28 +149,3 @@ def _populate_initial_data(app):
             print("SUCCESS: Начальные типы заявок добавлены.")
         else:
             print("INFO: Таблица 'application_types' уже содержит данные. Заполнение пропущено.")
-
-
-def _create_default_admin(app):
-    """
-    Проверяет наличие администратора по умолчанию и создает его, если он отсутствует.
-    """
-    with app.app_context():
-        from .models import User
-        admin_username = app.config.get('ADMIN_USERNAME')
-        admin_password = app.config.get('ADMIN_PASSWORD')
-
-        if not all([admin_username, admin_password]):
-            print("WARNING: ADMIN_USERNAME или ADMIN_PASSWORD не установлены. Создание админа пропущено.")
-            return
-
-        if User.query.filter_by(username=admin_username).first():
-            print(f"INFO: Пользователь '{admin_username}' уже существует.")
-            return
-
-        print(f"INFO: Пользователь '{admin_username}' не найден. Создание нового...")
-        user = User(username=admin_username, role='Админ')
-        user.set_password(admin_password)
-        db.session.add(user)
-        db.session.commit()
-        print(f"SUCCESS: Пользователь '{admin_username}' успешно создан.")
