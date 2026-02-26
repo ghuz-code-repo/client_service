@@ -144,30 +144,128 @@ class SQLPagination:
                 last = num
 
 
+def build_client_filters(args):
+    """
+    Парсит query-параметры и строит SQL-фильтры для страницы клиентов.
+    
+    Возвращает (where_parts: list[str], params: dict, has_app_filter: bool)
+    where_parts — дополнительные условия для WHERE
+    params — параметры для SQL
+    has_app_filter — нужен ли EXISTS подзапрос к applications
+    """
+    where_parts = []
+    app_conditions = []
+    params = {}
+
+    # --- Фильтры по клиенту/договору ---
+    search_query = args.get('search', '').strip()
+    if search_query:
+        where_parts.append("(c.contacts_buy_name LIKE :search OR c.contacts_buy_phones LIKE :search OR d.agreement_number LIKE :search)")
+        params['search'] = f'%{search_query}%'
+
+    client_id = args.get('client_id', '').strip()
+    if client_id:
+        where_parts.append("c.id = :client_id")
+        params['client_id'] = client_id
+
+    complex_name = args.get('complex_name', '').strip()
+    if complex_name:
+        where_parts.append("h.complex_name = :complex_name")
+        params['complex_name'] = complex_name
+
+    house_name = args.get('house_name', '').strip()
+    if house_name:
+        where_parts.append("h.name = :house_name")
+        params['house_name'] = house_name
+
+    # --- Фильтры по заявкам (через EXISTS подзапрос) ---
+    app_status = args.get('app_status', '').strip()
+    if app_status:
+        app_conditions.append("a.status = :app_status")
+        params['app_status'] = app_status
+
+    app_type = args.get('app_type', '').strip()
+    if app_type:
+        app_conditions.append("a.application_type = :app_type")
+        params['app_type'] = app_type
+
+    responsible_id = args.get('responsible_id', '').strip()
+    if responsible_id:
+        app_conditions.append("a.responsible_person_id = :responsible_id")
+        params['responsible_id'] = responsible_id
+
+    date_from = args.get('date_from', '').strip()
+    if date_from:
+        app_conditions.append("a.created_at >= :date_from")
+        params['date_from'] = date_from
+
+    date_to = args.get('date_to', '').strip()
+    if date_to:
+        app_conditions.append("a.created_at < date(:date_to, '+1 day')")
+        params['date_to'] = date_to
+
+    overdue = args.get('overdue', '').strip()
+    if overdue == 'yes':
+        app_conditions.append("a.due_date IS NOT NULL AND a.completed_at IS NULL AND a.due_date < datetime('now')")
+    elif overdue == 'no':
+        app_conditions.append("(a.due_date IS NULL OR a.completed_at IS NOT NULL OR a.due_date >= datetime('now'))")
+
+    app_source = args.get('app_source', '').strip()
+    if app_source:
+        app_conditions.append("a.source = :app_source")
+        params['app_source'] = app_source
+
+    has_app_filter = len(app_conditions) > 0
+    if has_app_filter:
+        exists_clause = "EXISTS (SELECT 1 FROM applications a WHERE a.client_id = c.id AND " + " AND ".join(app_conditions) + ")"
+        where_parts.append(exists_clause)
+
+    return where_parts, params, has_app_filter
+
+
 @main.route('/')
 @auth_required(any_of=['client-service.applications.view.all', 'client-service.applications.view.own', 'client-service.applications.view.responsible'])
 def index():
     page = request.args.get('page', 1, type=int)
-    search_query = request.args.get('search', '')
     per_page = 100
     offset = (page - 1) * per_page
-    params = {}
-    from_clause = "FROM estate_deals_contacts c JOIN estate_deals d ON c.id=d.contacts_buy_id"
-    where_clause = "WHERE c.contacts_buy_name IS NOT NULL AND c.contacts_buy_name!='' AND c.contacts_buy_phones IS NOT NULL AND c.contacts_buy_phones!='' AND d.agreement_number IS NOT NULL AND TRIM(d.agreement_number)!=''"
-    if search_query:
-        where_clause += " AND (c.contacts_buy_name LIKE :search OR d.agreement_number LIKE :search)"
-        params['search'] = f'%{search_query}%'
 
+    # --- Построение фильтров ---
+    extra_where, params, has_app_filter = build_client_filters(request.args)
+
+    # Базовые условия (клиент с именем, телефоном и договором)
+    base_conditions = [
+        "c.contacts_buy_name IS NOT NULL", "c.contacts_buy_name!=''",
+        "c.contacts_buy_phones IS NOT NULL", "c.contacts_buy_phones!=''",
+        "d.agreement_number IS NOT NULL", "d.agreement_number!=''"
+    ]
+
+    # Если фильтруем по ЖК/дому, нужен JOIN на sells/houses уже в подзапросе пагинации
+    need_house_join = bool(request.args.get('complex_name', '').strip() or request.args.get('house_name', '').strip())
+
+    from_clause = "FROM estate_deals_contacts c JOIN estate_deals d ON c.id=d.contacts_buy_id"
+    if need_house_join:
+        from_clause += " LEFT JOIN estate_sells s ON d.estate_sell_id=s.estate_sell_id LEFT JOIN estate_houses h ON s.house_id=h.house_id"
+
+    all_conditions = base_conditions + extra_where
+    where_clause = "WHERE " + " AND ".join(all_conditions)
+
+    # COUNT
     count_sql = f"SELECT COUNT(DISTINCT c.id) {from_clause} {where_clause}"
     total_clients = db.session.execute(text(count_sql), params).scalar() or 0
+
+    # DATA
     data_sql = f"""
-        SELECT c.id AS client_id,c.contacts_buy_name,c.contacts_buy_phones,d.agreement_number,d.deal_sum,d.finances_income_reserved,s.estate_floor,s.estate_riser,s.geo_flatnum,s.estate_rooms,h.complex_name,h.name as house_name
+        SELECT c.id AS client_id,c.contacts_buy_name,c.contacts_buy_phones,
+               d.agreement_number,d.deal_sum,d.finances_income_reserved,
+               s.estate_floor,s.estate_riser,s.geo_flatnum,s.estate_rooms,
+               h.complex_name,h.name as house_name
         FROM estate_deals_contacts c
         JOIN estate_deals d ON c.id=d.contacts_buy_id
         LEFT JOIN estate_sells s ON d.estate_sell_id=s.estate_sell_id
         LEFT JOIN estate_houses h ON s.house_id=h.house_id
         JOIN(SELECT DISTINCT c.id {from_clause} {where_clause} ORDER BY c.contacts_buy_name LIMIT :limit OFFSET :offset) AS page_ids ON c.id=page_ids.id
-        WHERE d.agreement_number IS NOT NULL AND TRIM(d.agreement_number)!=''
+        WHERE d.agreement_number IS NOT NULL AND d.agreement_number!=''
     """
     params['limit'], params['offset'] = per_page, offset
     all_data = db.session.execute(text(data_sql), params).mappings().all()
@@ -203,22 +301,36 @@ def index():
 
     pagination = SQLPagination(client_list, page, per_page, total_clients)
     
-    # Получаем данные для модального окна создания заявки без клиента
+    # Получаем данные для модального окна и фильтров
     application_types = ApplicationType.query.order_by(ApplicationType.name).all()
     defect_types_query = DefectType.query.order_by(DefectType.name).all()
     defect_types = [{'id': dt.id, 'name': dt.name} for dt in defect_types_query]
     responsible_persons = ResponsiblePerson.query.order_by(ResponsiblePerson.full_name).all()
-    
+
+    # Список статусов для фильтра
+    app_statuses = ['В работе', 'Выполнено', 'Частично выполнено', 'Закрыто', 'Отклонено']
+    # Список источников для фильтра
+    app_sources = ['Звонок', 'Email', 'Личный визит', 'Сайт', 'Другое']
+
+    # Собираем активные фильтры для передачи в пагинацию
+    filter_keys = ['search', 'client_id', 'complex_name', 'house_name',
+                   'app_status', 'app_type', 'responsible_id', 'date_from', 'date_to',
+                   'overdue', 'app_source']
+    filter_params = {k: request.args.get(k, '') for k in filter_keys if request.args.get(k, '').strip()}
+
     return render_template('index.html', 
                          clients=client_list, 
                          pagination=pagination, 
-                         search_query=search_query,
+                         search_query=request.args.get('search', ''),
+                         filter_params=filter_params,
                          application_types=application_types,
+                         app_statuses=app_statuses,
+                         app_sources=app_sources,
                          defect_types=defect_types,
                          responsible_persons=responsible_persons)
 
 
-@main.route('/client/<int:client_id>')
+@main.route('/client/<signed_int:client_id>')
 @auth_required(any_of=['client-service.applications.view.all', 'client-service.applications.view.own', 'client-service.applications.view.responsible'])
 def client_card(client_id):
     contact = EstateDealsContacts.query.get_or_404(client_id)
@@ -253,6 +365,50 @@ def client_card(client_id):
                            warranty_info=warranty_info,
                            current_date=current_date,
                            client_comment=contact.client_comment)
+
+
+@main.route('/application/<int:app_id>')
+@auth_required(any_of=['client-service.applications.view.all', 'client-service.applications.view.own', 'client-service.applications.view.responsible'])
+def application_card(app_id):
+    """Карточка заявки — детальный просмотр"""
+    from .auth_utils import has_permission, get_current_user_id, get_or_create_local_user
+
+    app_obj = Application.query.options(
+        joinedload(Application.client),
+        joinedload(Application.responsible_person),
+        joinedload(Application.creator),
+    ).get_or_404(app_id)
+
+    # Проверка доступа: все / свои / ответственный / NC-заявки
+    if not has_permission('client-service.applications.view.all'):
+        current_gateway_user_id = get_current_user_id()
+        local_user = get_or_create_local_user(commit=True) if current_gateway_user_id else None
+        allowed = False
+        if local_user and has_permission('client-service.applications.view.own') and app_obj.creator_id == local_user.id:
+            allowed = True
+        if current_gateway_user_id and has_permission('client-service.applications.view.responsible'):
+            rp = ResponsiblePerson.query.filter_by(gateway_user_id=current_gateway_user_id).first()
+            if rp and rp.id == app_obj.responsible_person_id:
+                allowed = True
+        # NC/SYSTEM-001 заявки доступны всем авторизованным
+        if app_obj.agreement_number and (app_obj.agreement_number.startswith('NC-') or app_obj.agreement_number == 'SYSTEM-001'):
+            allowed = True
+        if not allowed:
+            abort(403)
+
+    defects = Defect.query.filter_by(application_id=app_id).all()
+    logs = ApplicationLog.query.filter_by(application_id=app_id).options(
+        joinedload(ApplicationLog.author)
+    ).order_by(ApplicationLog.timestamp.desc()).all()
+
+    application_statuses = current_app.config['APPLICATION_STATUSES']
+
+    return render_template('application_card.html',
+                           app=app_obj,
+                           defects=defects,
+                           logs=logs,
+                           application_statuses=application_statuses)
+
 
 @main.route('/export-applications')
 @auth_required(permission='client-service.applications.export')
@@ -541,6 +697,34 @@ def applications():
     app_type = request.args.get('type', '')
     if app_type:
         query = query.filter(Application.application_type == app_type)
+
+    # Фильтр по ответственному
+    responsible_id = request.args.get('responsible_id', '')
+    if responsible_id:
+        query = query.filter(Application.responsible_person_id == responsible_id)
+
+    # Фильтр по источнику
+    source = request.args.get('source', '')
+    if source:
+        query = query.filter(Application.source == source)
+
+    # Фильтр по ЖК
+    housing_complex = request.args.get('housing_complex', '')
+    if housing_complex:
+        query = query.filter(Application.housing_complex == housing_complex)
+
+    # Фильтр по дому
+    house_number = request.args.get('house_number', '')
+    if house_number:
+        query = query.filter(Application.house_number == house_number)
+
+    # Фильтр по ID заявки
+    app_id_filter = request.args.get('app_id', '').strip()
+    if app_id_filter:
+        try:
+            query = query.filter(Application.id == int(app_id_filter))
+        except ValueError:
+            pass
     
     # Фильтр по датам создания
     date_from = request.args.get('date_from', '')
@@ -559,12 +743,13 @@ def applications():
         except ValueError:
             pass
     
-    # Поиск по клиенту или номеру договора
+    # Поиск по клиенту, телефону или номеру договора
     search = request.args.get('search', '')
     if search:
         query = query.join(Application.client).filter(
             or_(
                 EstateDealsContacts.contacts_buy_name.contains(search),
+                EstateDealsContacts.contacts_buy_phones.contains(search),
                 Application.agreement_number.contains(search)
             )
         )
@@ -612,11 +797,25 @@ def applications():
     application_types = db.session.query(Application.application_type).distinct().order_by(Application.application_type).all()
     application_types = [t[0] for t in application_types if t[0]]
 
+    # Данные для фильтров
+    responsible_persons = ResponsiblePerson.query.order_by(ResponsiblePerson.full_name).all()
+    app_sources = ['Звонок', 'Email', 'Личный визит', 'Сайт', 'Другое']
+    app_statuses = ['В работе', 'Выполнено', 'Частично выполнено', 'Закрыто', 'Отклонено']
+
+    # Собираем активные фильтры для пагинации
+    filter_keys = ['status', 'type', 'date_from', 'date_to', 'search', 'overdue',
+                   'sort', 'responsible_id', 'source', 'housing_complex', 'house_number', 'app_id']
+    filter_params = {k: request.args.get(k, '') for k in filter_keys if request.args.get(k, '').strip()}
+
     return render_template('applications.html', 
                          applications=apps_paginated,
-                         application_types=application_types)
+                         application_types=application_types,
+                         responsible_persons=responsible_persons,
+                         app_sources=app_sources,
+                         app_statuses=app_statuses,
+                         filter_params=filter_params)
 
-@main.route('/client/<int:client_id>/application/create', methods=['POST'])
+@main.route('/client/<signed_int:client_id>/application/create', methods=['POST'])
 @auth_required(permission='client-service.applications.create')
 def create_application(client_id):
     from .auth_utils import get_or_create_local_user
@@ -904,7 +1103,7 @@ def create_general_application():
     return redirect(url_for('main.client_card', client_id=new_client.id))
 
 
-@main.route('/client-service/client/<int:client_id>/update_comment', methods=['POST'])
+@main.route('/client-service/client/<signed_int:client_id>/update_comment', methods=['POST'])
 @auth_required(permission='client-service.admin.users')
 def update_client_comment(client_id):
     """Обновление комментария клиента (только для админа)"""
@@ -1070,12 +1269,15 @@ def update_application_status(app_id):
         abort(403)  # Forbidden
 
     new_status, comment = request.form.get('status'), request.form.get('comment')
+    # Определяем страницу возврата (карточка заявки или карточка клиента)
+    redirect_to = request.form.get('next') or request.args.get('next') or url_for('main.client_card', client_id=app.client_id)
+    
     if not new_status or not comment:
         flash('Для смены статуса необходимо выбрать новый статус и оставить комментарий.', 'danger')
-        return redirect(url_for('main.client_card', client_id=app.client_id))
+        return redirect(redirect_to)
     if app.status == new_status:
         flash('Новый статус совпадает с текущим. Изменений не внесено.', 'info')
-        return redirect(url_for('main.client_card', client_id=app.client_id))
+        return redirect(redirect_to)
     old_status = app.status
     app.status = new_status
     # Обновляем временной штамп последнего изменения статуса
@@ -1098,7 +1300,7 @@ def update_application_status(app_id):
     except Exception as e:
         db.session.rollback()
         flash(f'Ошибка при изменении статуса: {e}', 'danger')
-    return redirect(url_for('main.client_card', client_id=app.client_id))
+    return redirect(redirect_to)
 
 
 @main.route('/api/application/<int:app_id>/logs')

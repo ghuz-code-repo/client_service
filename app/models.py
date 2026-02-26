@@ -165,6 +165,8 @@ class Client:
         self.agreement_numbers = sorted(list(set(d.agreement_number for d in deals if d.agreement_number and d.agreement_number.strip())))
         self.deals_map = {}
         self.deals = []
+        complexes_set = set()
+        houses_set = set()
         for deal in deals:
             if not deal.agreement_number or not deal.agreement_number.strip():
                 continue
@@ -184,6 +186,12 @@ class Client:
             self.deals.append(type('obj', (), deal_info)())
             if house:
                 self.deals_map[deal.agreement_number] = house.complex_name
+                if house.complex_name:
+                    complexes_set.add(house.complex_name)
+                if house.name:
+                    houses_set.add(house.name)
+        self.complexes = sorted(complexes_set)
+        self.houses = sorted(houses_set)
 
 class EmailLog(db.Model):
     __tablename__ = 'email_logs'

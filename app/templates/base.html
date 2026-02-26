@@ -128,6 +128,13 @@
         @keyframes fadeInUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
         .animate-on-scroll.is-visible { animation: fadeInUp 0.6s ease-out forwards; }
         .animate-on-scroll { opacity: 0; }
+
+        /* Золотая подсветка активных фильтров */
+        .filter-active {
+            box-shadow: 0 0 0 0.2rem rgba(var(--gh-gold-rgb), 0.45) !important;
+            border-color: var(--gh-gold) !important;
+            transition: box-shadow 0.3s ease, border-color 0.3s ease;
+        }
     </style>
 </head>
 <body>
@@ -233,6 +240,95 @@
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/particles.js@2.0.0/particles.min.js"></script>
+
+    <!-- Утилита сохранения фильтров и золотой подсветки -->
+    <script>
+    window.CrmFilters = {
+        _form: null,
+        _ignoreSet: null,
+
+        /**
+         * Инициализация для конкретной страницы.
+         * @param {string} pageKey  — уникальный ключ ('clients', 'applications')
+         * @param {string} formId   — id формы фильтров (по умолч. 'filterForm')
+         * @param {string[]} ignore — имена полей, которые не подсвечивать (напр. 'sort')
+         */
+        init: function(pageKey, formId, ignore) {
+            var key = 'crm_filters_' + pageKey;
+            var form = document.getElementById(formId || 'filterForm');
+            if (!form) return;
+
+            var ignoreSet = new Set(ignore || ['sort']);
+            this._form = form;
+            this._ignoreSet = ignoreSet;
+
+            var urlParams = new URLSearchParams(window.location.search);
+            var hasQueryString = window.location.search.length > 1; // "?" минимум
+
+            // Собираем непустые фильтры (без page)
+            var toSave = new URLSearchParams();
+            urlParams.forEach(function(v, k) {
+                if (k !== 'page' && v.trim()) toSave.set(k, v);
+            });
+            var hasActiveFilters = toSave.toString().length > 0;
+
+            if (hasQueryString) {
+                // Форма была отправлена — сохраняем текущее состояние
+                // (если все фильтры пустые — очищаем sessionStorage)
+                if (hasActiveFilters) {
+                    sessionStorage.setItem(key, toSave.toString());
+                } else {
+                    sessionStorage.removeItem(key);
+                }
+            } else {
+                // Переход по ссылке / «Назад» без query string — восстанавливаем
+                var saved = sessionStorage.getItem(key);
+                if (saved) {
+                    window.location.replace(window.location.pathname + '?' + saved);
+                    return;
+                }
+            }
+
+            // Подсветка активных фильтров
+            this._highlightAll(form, ignoreSet);
+
+            // Live-подсветка при изменении
+            var self = this;
+            form.querySelectorAll('select, input').forEach(function(el) {
+                el.addEventListener('change', function() { self._hl(el, ignoreSet); });
+                el.addEventListener('input',  function() { self._hl(el, ignoreSet); });
+            });
+        },
+
+        /** Повторная подсветка (вызывать после AJAX-загрузки select'ов). */
+        refresh: function() {
+            if (this._form && this._ignoreSet) {
+                this._highlightAll(this._form, this._ignoreSet);
+            }
+        },
+
+        /** Очистить сохранённые фильтры (вызывается на кнопке «Сбросить»). */
+        clear: function(pageKey) {
+            sessionStorage.removeItem('crm_filters_' + pageKey);
+        },
+
+        _highlightAll: function(form, ignoreSet) {
+            var self = this;
+            form.querySelectorAll('select, input').forEach(function(el) {
+                self._hl(el, ignoreSet);
+            });
+        },
+
+        _hl: function(el, ignoreSet) {
+            if (ignoreSet.has(el.name)) return;
+            if (el.value && el.value.trim()) {
+                el.classList.add('filter-active');
+            } else {
+                el.classList.remove('filter-active');
+            }
+        }
+    };
+    </script>
 
     {% block scripts %}
     <script>

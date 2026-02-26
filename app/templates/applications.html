@@ -5,78 +5,122 @@
 {% block content %}
 <!-- Панель фильтрации -->
 <div class="card shadow-sm mb-4">
-    <div class="card-header bg-light">
-        <h2 class="card-title h5 mb-0">Фильтры и сортировка</h2>
+    <div class="card-header bg-light d-flex justify-content-between align-items-center">
+        <h2 class="card-title h5 mb-0"><i class="bi bi-funnel me-2"></i>Фильтры и сортировка</h2>
+        <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#filtersCollapse" aria-expanded="true">
+            <i class="bi bi-chevron-down"></i>
+        </button>
     </div>
+    <div class="collapse show" id="filtersCollapse">
     <div class="card-body">
         <form method="get" action="{{ url_for('main.applications') }}" id="filterForm">
+            <!-- Ряд 1 -->
             <div class="row g-3">
-                <div class="col-md-3">
-                    <label for="status" class="form-label">Статус</label>
-                    <select class="form-select" id="status" name="status">
-                        <option value="">Все статусы</option>
-                        <option value="В работе" {% if request.args.get('status') == 'В работе' %}selected{% endif %}>В работе</option>
-                        <option value="Выполнено" {% if request.args.get('status') == 'Выполнено' %}selected{% endif %}>Выполнено</option>
-                        <option value="Частично выполнено" {% if request.args.get('status') == 'Частично выполнено' %}selected{% endif %}>Частично выполнено</option>
-                        <option value="Закрыто" {% if request.args.get('status') == 'Закрыто' %}selected{% endif %}>Закрыто</option>
-                        <option value="Отклонено" {% if request.args.get('status') == 'Отклонено' %}selected{% endif %}>Отклонено</option>
-                    </select>
-                </div>
-                <div class="col-md-3">
-                    <label for="date_from" class="form-label">Дата создания с</label>
-                    <input type="date" class="form-control" id="date_from" name="date_from" value="{{ request.args.get('date_from', '') }}">
-                </div>
-                <div class="col-md-3">
-                    <label for="date_to" class="form-label">Дата создания по</label>
-                    <input type="date" class="form-control" id="date_to" name="date_to" value="{{ request.args.get('date_to', '') }}">
+                <div class="col-md-2">
+                    <label for="app_id" class="form-label">ID заявки</label>
+                    <input type="number" class="form-control" id="app_id" name="app_id" placeholder="ID" value="{{ filter_params.get('app_id', '') }}">
                 </div>
                 <div class="col-md-3">
                     <label for="search" class="form-label">Поиск</label>
-                    <input type="text" class="form-control" id="search" name="search" placeholder="Клиент, № договора..." value="{{ request.args.get('search', '') }}">
+                    <input type="text" class="form-control" id="search" name="search" placeholder="Клиент, телефон, № договора..." value="{{ filter_params.get('search', '') }}">
                 </div>
-            </div>
-            <div class="row g-3 mt-2">
-                <div class="col-md-3">
+                <div class="col-md-2">
+                    <label for="status" class="form-label">Статус</label>
+                    <select class="form-select" id="status" name="status">
+                        <option value="">Все статусы</option>
+                        {% for st in app_statuses %}
+                        <option value="{{ st }}" {% if filter_params.get('status') == st %}selected{% endif %}>{{ st }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-2">
                     <label for="type" class="form-label">Тип заявки</label>
                     <select class="form-select" id="type" name="type">
                         <option value="">Все типы</option>
                         {% for app_type in application_types %}
-                        <option value="{{ app_type }}" {% if request.args.get('type') == app_type %}selected{% endif %}>{{ app_type }}</option>
+                        <option value="{{ app_type }}" {% if filter_params.get('type') == app_type %}selected{% endif %}>{{ app_type }}</option>
                         {% endfor %}
                     </select>
                 </div>
                 <div class="col-md-3">
+                    <label for="responsible_id" class="form-label">Ответственный</label>
+                    <select class="form-select" id="responsible_id" name="responsible_id">
+                        <option value="">Все</option>
+                        {% for rp in responsible_persons %}
+                        <option value="{{ rp.id }}" {% if filter_params.get('responsible_id') == rp.id|string %}selected{% endif %}>{{ rp.full_name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+
+            <!-- Ряд 2 -->
+            <div class="row g-3 mt-1">
+                <div class="col-md-2">
+                    <label for="source" class="form-label">Источник</label>
+                    <select class="form-select" id="source" name="source">
+                        <option value="">Все</option>
+                        {% for src in app_sources %}
+                        <option value="{{ src }}" {% if filter_params.get('source') == src %}selected{% endif %}>{{ src }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-2">
                     <label for="overdue" class="form-label">Просроченные</label>
                     <select class="form-select" id="overdue" name="overdue">
                         <option value="">Все</option>
-                        <option value="yes" {% if request.args.get('overdue') == 'yes' %}selected{% endif %}>Только просроченные</option>
-                        <option value="no" {% if request.args.get('overdue') == 'no' %}selected{% endif %}>Не просроченные</option>
+                        <option value="yes" {% if filter_params.get('overdue') == 'yes' %}selected{% endif %}>Только просроченные</option>
+                        <option value="no" {% if filter_params.get('overdue') == 'no' %}selected{% endif %}>Не просроченные</option>
                     </select>
                 </div>
+                <div class="col-md-2">
+                    <label for="housing_complex" class="form-label">ЖК</label>
+                    <select class="form-select" id="filter_housing_complex" name="housing_complex">
+                        <option value="">Все ЖК</option>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label for="house_number" class="form-label">Дом</label>
+                    <select class="form-select" id="filter_house_number" name="house_number" {% if not filter_params.get('housing_complex') %}disabled{% endif %}>
+                        <option value="">{% if filter_params.get('housing_complex') %}Все дома{% else %}Сначала ЖК{% endif %}</option>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label for="date_from" class="form-label">Дата с</label>
+                    <input type="date" class="form-control" id="date_from" name="date_from" value="{{ filter_params.get('date_from', '') }}">
+                </div>
+                <div class="col-md-2">
+                    <label for="date_to" class="form-label">Дата по</label>
+                    <input type="date" class="form-control" id="date_to" name="date_to" value="{{ filter_params.get('date_to', '') }}">
+                </div>
+            </div>
+
+            <!-- Ряд 3: сортировка + кнопки -->
+            <div class="row g-3 mt-1">
                 <div class="col-md-3">
                     <label for="sort" class="form-label">Сортировка</label>
                     <select class="form-select" id="sort" name="sort">
-                        <option value="created_desc" {% if request.args.get('sort', 'created_desc') == 'created_desc' %}selected{% endif %}>По дате создания (новые сначала)</option>
-                        <option value="created_asc" {% if request.args.get('sort') == 'created_asc' %}selected{% endif %}>По дате создания (старые сначала)</option>
-                        <option value="due_desc" {% if request.args.get('sort') == 'due_desc' %}selected{% endif %}>По сроку выполнения (ближайшие)</option>
-                        <option value="due_asc" {% if request.args.get('sort') == 'due_asc' %}selected{% endif %}>По сроку выполнения (дальние)</option>
-                        <option value="id_desc" {% if request.args.get('sort') == 'id_desc' %}selected{% endif %}>По ID (убывание)</option>
-                        <option value="id_asc" {% if request.args.get('sort') == 'id_asc' %}selected{% endif %}>По ID (возрастание)</option>
+                        <option value="created_desc" {% if filter_params.get('sort', 'created_desc') == 'created_desc' %}selected{% endif %}>По дате создания (новые)</option>
+                        <option value="created_asc" {% if filter_params.get('sort') == 'created_asc' %}selected{% endif %}>По дате создания (старые)</option>
+                        <option value="due_desc" {% if filter_params.get('sort') == 'due_desc' %}selected{% endif %}>По сроку (ближайшие)</option>
+                        <option value="due_asc" {% if filter_params.get('sort') == 'due_asc' %}selected{% endif %}>По сроку (дальние)</option>
+                        <option value="id_desc" {% if filter_params.get('sort') == 'id_desc' %}selected{% endif %}>По ID (убывание)</option>
+                        <option value="id_asc" {% if filter_params.get('sort') == 'id_asc' %}selected{% endif %}>По ID (возрастание)</option>
                     </select>
                 </div>
-                <div class="col-md-3 d-flex align-items-end">
-                    <button type="submit" class="btn btn-primary me-2">
-                        <i class="bi bi-filter"></i> Применить
+                <div class="col-md-9 d-flex align-items-end justify-content-end gap-2">
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-filter me-1"></i> Применить
                     </button>
-                    <a href="{{ url_for('main.applications') }}" class="btn btn-secondary me-2">
-                        <i class="bi bi-x-circle"></i> Сбросить
+                    <a href="{{ url_for('main.applications') }}" class="btn btn-secondary" onclick="CrmFilters.clear('applications')">
+                        <i class="bi bi-x-circle me-1"></i> Сбросить
                     </a>
                     <button type="button" class="btn btn-success" onclick="exportToExcel()">
-                        <i class="bi bi-file-earmark-excel"></i> Excel
+                        <i class="bi bi-file-earmark-excel me-1"></i> Excel
                     </button>
                 </div>
             </div>
         </form>
+    </div>
     </div>
 </div>
 
@@ -108,7 +152,7 @@
                     {% for app in applications.items %}
                     <tr {% if app.is_overdue %}class="table-danger"{% endif %}>
                         <td>
-                            #{{ app.id }}
+                            <a href="{{ url_for('main.application_card', app_id=app.id) }}" class="text-decoration-none fw-bold" style="color: var(--gh-gold);">#{{ app.id }}</a>
                             {% if app.is_overdue %}
                                 <span class="badge bg-danger ms-1" title="Просрочено"><i class="bi bi-exclamation-triangle"></i></span>
                             {% endif %}
@@ -190,19 +234,19 @@
 <nav aria-label="Page navigation" class="mt-4">
     <ul class="pagination justify-content-center">
         <li class="page-item {% if not applications.has_prev %}disabled{% endif %}">
-            <a class="page-link" href="{{ url_for('main.applications', page=applications.prev_num, status=request.args.get('status'), type=request.args.get('type'), date_from=request.args.get('date_from'), date_to=request.args.get('date_to'), search=request.args.get('search'), overdue=request.args.get('overdue'), sort=request.args.get('sort')) }}">‹</a>
+            <a class="page-link" href="{{ url_for('main.applications', page=applications.prev_num, **filter_params) }}">‹</a>
         </li>
         {% for p in applications.iter_pages() %}
             {% if p %}
                 <li class="page-item {% if p == applications.page %}active{% endif %}">
-                    <a class="page-link" href="{{ url_for('main.applications', page=p, status=request.args.get('status'), type=request.args.get('type'), date_from=request.args.get('date_from'), date_to=request.args.get('date_to'), search=request.args.get('search'), overdue=request.args.get('overdue'), sort=request.args.get('sort')) }}">{{ p }}</a>
+                    <a class="page-link" href="{{ url_for('main.applications', page=p, **filter_params) }}">{{ p }}</a>
                 </li>
             {% else %}
                 <li class="page-item disabled"><span class="page-link">…</span></li>
             {% endif %}
         {% endfor %}
         <li class="page-item {% if not applications.has_next %}disabled{% endif %}">
-            <a class="page-link" href="{{ url_for('main.applications', page=applications.next_num, status=request.args.get('status'), type=request.args.get('type'), date_from=request.args.get('date_from'), date_to=request.args.get('date_to'), search=request.args.get('search'), overdue=request.args.get('overdue'), sort=request.args.get('sort')) }}">›</a>
+            <a class="page-link" href="{{ url_for('main.applications', page=applications.next_num, **filter_params) }}">›</a>
         </li>
     </ul>
 </nav>
@@ -260,6 +304,68 @@
 {{ super() }}
 <script>
 document.addEventListener('DOMContentLoaded', function () {
+    // --- Инициализация фильтров: сохранение + подсветка (ДО каскада!) ---
+    CrmFilters.init('applications', 'filterForm', ['sort']);
+
+    // --- ЖК → Дом каскад ---
+    const filterHCSelect = document.getElementById('filter_housing_complex');
+    const filterHouseSelect = document.getElementById('filter_house_number');
+    const savedHC = {{ (filter_params.get('housing_complex', '') | tojson) | safe }};
+    const savedHouse = {{ (filter_params.get('house_number', '') | tojson) | safe }};
+
+    function loadFilterComplexes() {
+        fetch('{{ url_for("main.get_housing_complexes") }}')
+            .then(r => r.json())
+            .then(data => {
+                filterHCSelect.innerHTML = '<option value="">Все ЖК</option>';
+                data.complexes.forEach(c => {
+                    const opt = document.createElement('option');
+                    opt.value = c;
+                    opt.textContent = c;
+                    if (c === savedHC) opt.selected = true;
+                    filterHCSelect.appendChild(opt);
+                });
+                CrmFilters.refresh();
+                // Если был сохранён ЖК — загрузить дома
+                if (savedHC) loadFilterHouses(savedHC, savedHouse);
+            })
+            .catch(err => console.error('Ошибка загрузки ЖК:', err));
+    }
+
+    function loadFilterHouses(complex, preselect) {
+        fetch(`{{ url_for("main.get_house_numbers") }}?complex=${encodeURIComponent(complex)}`)
+            .then(r => r.json())
+            .then(data => {
+                filterHouseSelect.innerHTML = '<option value="">Все дома</option>';
+                data.houses.forEach(h => {
+                    const opt = document.createElement('option');
+                    opt.value = h;
+                    opt.textContent = h;
+                    if (preselect && h === preselect) opt.selected = true;
+                    filterHouseSelect.appendChild(opt);
+                });
+                filterHouseSelect.disabled = false;
+                CrmFilters.refresh();
+            })
+            .catch(err => {
+                console.error('Ошибка загрузки домов:', err);
+                filterHouseSelect.innerHTML = '<option value="">Ошибка загрузки</option>';
+            });
+    }
+
+    if (filterHCSelect) {
+        loadFilterComplexes();
+        filterHCSelect.addEventListener('change', function() {
+            if (!this.value) {
+                filterHouseSelect.innerHTML = '<option value="">Сначала ЖК</option>';
+                filterHouseSelect.disabled = true;
+            } else {
+                loadFilterHouses(this.value, null);
+            }
+        });
+    }
+
+    // --- Delete modal ---
     const deleteModal = document.getElementById('deleteApplicationModal');
     if (deleteModal) {
         // Создаем ШАБЛОН URL с помощью Flask, чтобы избежать ошибок с префиксами

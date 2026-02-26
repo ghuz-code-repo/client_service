@@ -3,8 +3,15 @@ import datetime
 import os
 import base64
 from flask import Flask, g, request
+from sqlalchemy import event, text
+from werkzeug.routing import IntegerConverter
 from .extensions import db, mail, migrate
 from config import Config
+
+
+class SignedIntConverter(IntegerConverter):
+    """Конвертер URL, поддерживающий отрицательные целые числа (для NC-контактов с ID < 0)."""
+    regex = r'-?\d+'
 
 
 # --- ГЛАВНАЯ ФАБРИКА ПРИЛОЖЕНИЯ ---
@@ -17,6 +24,9 @@ def create_app(config_class=Config):
     app = Flask(__name__)
     app.config.from_object(config_class)
 
+    # Регистрируем конвертер для отрицательных ID (NC-контакты)
+    app.url_map.converters['signed_int'] = SignedIntConverter
+
     # Применяем PrefixMiddleware для корректной работы url_for() с префиксом
     from prefix_middleware import PrefixMiddleware
     app.wsgi_app = PrefixMiddleware(app.wsgi_app, prefix='/client-service')
@@ -25,6 +35,44 @@ def create_app(config_class=Config):
     db.init_app(app)
     mail.init_app(app)
     migrate.init_app(app, db)  # Связываем Flask-Migrate с приложением и БД
+
+    # ========== SQLite PERFORMANCE OPTIMIZATIONS ==========
+    def _set_sqlite_pragmas(dbapi_conn, connection_record):
+        """Оптимизация SQLite при каждом новом подключении."""
+        cursor = dbapi_conn.cursor()
+        cursor.execute('PRAGMA journal_mode=WAL')       # Write-Ahead Log: читатели не блокируют писателей
+        cursor.execute('PRAGMA synchronous=NORMAL')     # Баланс между скоростью и надёжностью
+        cursor.execute('PRAGMA cache_size=-32000')       # 32MB кэш (вместо 2MB по умолчанию)
+        cursor.execute('PRAGMA temp_store=MEMORY')       # Временные таблицы в памяти
+        cursor.execute('PRAGMA mmap_size=268435456')     # Memory-mapped I/O до 256MB
+        cursor.close()
+
+    with app.app_context():
+        engine = db.engine
+        if 'sqlite' in str(engine.url):
+            event.listen(engine, 'connect', _set_sqlite_pragmas)
+            # Создаём критические индексы (IF NOT EXISTS — безопасно при каждом запуске)
+            with engine.connect() as conn:
+                _set_sqlite_pragmas(conn.connection.dbapi_connection, None)
+                conn.execute(text('CREATE INDEX IF NOT EXISTS idx_applications_client_id ON applications(client_id)'))
+                conn.execute(text('CREATE INDEX IF NOT EXISTS idx_applications_status ON applications(status)'))
+                conn.execute(text('CREATE INDEX IF NOT EXISTS idx_applications_responsible ON applications(responsible_person_id)'))
+                conn.execute(text('CREATE INDEX IF NOT EXISTS idx_applications_type ON applications(application_type)'))
+                conn.execute(text('CREATE INDEX IF NOT EXISTS idx_applications_source ON applications(source)'))
+                conn.execute(text('CREATE INDEX IF NOT EXISTS idx_applications_created_at ON applications(created_at)'))
+                conn.execute(text('CREATE INDEX IF NOT EXISTS idx_applications_client_status ON applications(client_id, status)'))
+                conn.execute(text('CREATE INDEX IF NOT EXISTS idx_applications_client_responsible ON applications(client_id, responsible_person_id)'))
+                conn.execute(text('CREATE INDEX IF NOT EXISTS idx_applications_client_type ON applications(client_id, application_type)'))
+                conn.execute(text('CREATE INDEX IF NOT EXISTS idx_applications_client_source ON applications(client_id, source)'))
+                conn.execute(text('CREATE INDEX IF NOT EXISTS idx_deals_contacts_buy_id ON estate_deals(contacts_buy_id)'))
+                conn.execute(text('CREATE INDEX IF NOT EXISTS idx_deals_agreement ON estate_deals(agreement_number)'))
+                conn.execute(text('CREATE INDEX IF NOT EXISTS idx_deals_sell_id ON estate_deals(estate_sell_id)'))
+                conn.execute(text('CREATE INDEX IF NOT EXISTS idx_sells_house_id ON estate_sells(house_id)'))
+                conn.execute(text('CREATE INDEX IF NOT EXISTS idx_contacts_name ON estate_deals_contacts(contacts_buy_name)'))
+                conn.execute(text('ANALYZE'))  # Обновляем статистику для планировщика запросов
+                conn.commit()
+                app.logger.info('SQLite optimizations applied: WAL mode, indexes created, ANALYZE done')
+    # =====================================================
 
     # ========== AUTH-CONNECTOR INTEGRATION ==========
     
