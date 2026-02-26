@@ -874,6 +874,22 @@ def import_template():
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
+def _normalize_str(val):
+    """Нормализует строку из Excel: убирает _x000D_, \r, лишние пробелы.
+    openpyxl при чтении файлов, сохранённых из Excel (Windows),
+    может оставлять escape-последовательности _x000D_ (\r) в тексте."""
+    if val is None:
+        return ''
+    s = str(val)
+    # openpyxl XML escape для CR
+    s = s.replace('_x000D_', '')
+    # Windows CRLF → LF
+    s = s.replace('\r\n', '\n')
+    # Оставшиеся одиночные CR
+    s = s.replace('\r', '')
+    return s.strip()
+
+
 def _parse_import_file(filepath):
     """Парсит загруженный Excel-файл и возвращает список изменений + ошибки."""
     from .auth_utils import has_permission, get_current_user_id
@@ -947,7 +963,7 @@ def _parse_import_file(filepath):
             # ===== СОЗДАНИЕ НОВОЙ ЗАЯВКИ =====
             def _get(col_idx):
                 if col_idx is not None and len(row) > col_idx and row[col_idx] is not None:
-                    return str(row[col_idx]).strip()
+                    return _normalize_str(row[col_idx])
                 return ''
 
             contact_name = _get(name_col)
@@ -1048,8 +1064,8 @@ def _parse_import_file(filepath):
 
         # --- Статус ---
         if 'status' in col_map:
-            new_val = str(row[col_map['status']]).strip() if row[col_map['status']] else ''
-            if new_val and new_val != (app.status or ''):
+            new_val = _normalize_str(row[col_map['status']])
+            if new_val and new_val != _normalize_str(app.status):
                 if new_val not in VALID_STATUSES:
                     errors.append({'row': row_idx, 'error': f'Заявка #{app_id}: невалидный статус "{new_val}"'})
                     continue
@@ -1060,8 +1076,8 @@ def _parse_import_file(filepath):
 
         # --- Ответственный ---
         if 'responsible' in col_map:
-            new_val = str(row[col_map['responsible']]).strip() if row[col_map['responsible']] else ''
-            current_name = app.responsible_person.full_name if app.responsible_person else 'Не назначен'
+            new_val = _normalize_str(row[col_map['responsible']])
+            current_name = _normalize_str(app.responsible_person.full_name) if app.responsible_person else 'Не назначен'
             if new_val and new_val != current_name:
                 # Матчинг по имени (case-insensitive)
                 matched = responsible_persons.get(new_val.lower())
@@ -1084,8 +1100,8 @@ def _parse_import_file(filepath):
 
         # --- Источник ---
         if 'source' in col_map:
-            new_val = str(row[col_map['source']]).strip() if row[col_map['source']] else ''
-            current_val = app.source or 'Не указан'
+            new_val = _normalize_str(row[col_map['source']])
+            current_val = _normalize_str(app.source) or 'Не указан'
             if new_val and new_val != current_val and new_val != 'Не указан':
                 row_changes.append({
                     'field': 'Источник', 'old': current_val, 'new': new_val,
@@ -1121,8 +1137,8 @@ def _parse_import_file(filepath):
 
         # --- Комментарий к заявке ---
         if 'comment' in col_map:
-            new_val = str(row[col_map['comment']]).strip() if row[col_map['comment']] else ''
-            current_val = app.comment or ''
+            new_val = _normalize_str(row[col_map['comment']])
+            current_val = _normalize_str(app.comment)
             if new_val and new_val != current_val:
                 row_changes.append({
                     'field': 'Комментарий к заявке',
@@ -1133,10 +1149,10 @@ def _parse_import_file(filepath):
 
         # --- Последний комментарий (→ ApplicationLog) ---
         if 'log_comment' in col_map:
-            new_val = str(row[col_map['log_comment']]).strip() if row[col_map['log_comment']] else ''
+            new_val = _normalize_str(row[col_map['log_comment']])
             last_log = ApplicationLog.query.filter_by(application_id=app_id) \
                 .order_by(ApplicationLog.timestamp.desc()).first()
-            current_val = last_log.comment if last_log else ''
+            current_val = _normalize_str(last_log.comment) if last_log else ''
             if new_val and new_val != current_val and new_val != 'N/A':
                 row_changes.append({
                     'field': 'Новый комментарий (лог)',
