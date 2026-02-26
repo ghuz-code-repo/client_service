@@ -319,7 +319,46 @@
               <a href="{{ url_for('main.import_template') }}" class="btn btn-outline-warning">
                 <i class="bi bi-download me-1"></i> Скачать шаблон импорта
               </a>
-              <div class="text-muted small mt-1">Шаблон с выпадающими списками. Пустой ID = новая заявка, заполненный = обновление.</div>
+              <div class="text-muted small mt-1">Шаблон с выпадающими списками и 22 колонками (как в экспорте). Можно использовать файл экспорта напрямую.</div>
+            </div>
+            <!-- Сворачиваемая инструкция -->
+            <div class="text-start mb-3">
+              <a class="btn btn-sm btn-outline-secondary" data-bs-toggle="collapse" href="#importInstructions" role="button" aria-expanded="false" aria-controls="importInstructions">
+                <i class="bi bi-question-circle me-1"></i>Инструкция по импорту
+              </a>
+              <div class="collapse mt-2" id="importInstructions">
+                <div class="card card-body small" style="background: rgba(var(--gh-gold-rgb), 0.05); border-color: var(--gh-gold);">
+                  <div class="row">
+                    <div class="col-md-6">
+                      <strong>Режим работы:</strong>
+                      <ul class="mb-2">
+                        <li>Пустой «ID Заявки» → <span class="text-success">создание</span> новой заявки</li>
+                        <li>Заполненный «ID Заявки» → <span class="text-primary">обновление</span> существующей</li>
+                      </ul>
+                      <strong>Обязательные поля (новая заявка):</strong>
+                      <ul class="mb-2">
+                        <li>ФИО Клиента</li>
+                        <li>Телефон клиента</li>
+                        <li>Тип заявки</li>
+                        <li>Ответственный</li>
+                        <li>Комментарий к заявке</li>
+                      </ul>
+                    </div>
+                    <div class="col-md-6">
+                      <strong>Обновляемые поля:</strong>
+                      <ul class="mb-2">
+                        <li>Статус, Ответственный, Источник</li>
+                        <li>Срок выполнения, Комментарии</li>
+                      </ul>
+                      <strong>Цвет заголовков в шаблоне:</strong>
+                      <ul class="mb-0">
+                        <li><span class="badge" style="background:#fff; color:#333; border:1px solid #ddd;">Белый</span> — редактируемая колонка</li>
+                        <li><span class="badge" style="background:#E0E0E0; color:#333; border:1px solid #bbb;">Серый</span> — только для чтения (игнорируется)</li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
             <hr>
             <div id="importDropZone" class="border border-2 border-dashed rounded p-5 mb-3" style="cursor:pointer; border-color: var(--gh-gold) !important;">

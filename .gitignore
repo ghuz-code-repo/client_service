@@ -6,3 +6,4 @@ app/word_templates/*
 app/__pycache__/*
 __pycache__/*
 migrations/versions/__pycache__/*
+instance/*
