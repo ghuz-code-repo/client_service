@@ -1127,7 +1127,10 @@ def _parse_import_file(filepath):
                         continue
 
             current_due = app.due_date
-            if new_due and (not current_due or abs((new_due - current_due).total_seconds()) > 60):
+            # Сравниваем только дату (без времени), т.к. Excel всегда возвращает 00:00:00
+            new_due_date = new_due.date() if isinstance(new_due, datetime) else new_due
+            current_due_date = current_due.date() if isinstance(current_due, datetime) else current_due
+            if new_due and (not current_due or new_due_date != current_due_date):
                 row_changes.append({
                     'field': 'Срок выполнения',
                     'old': current_due.strftime('%Y-%m-%d') if current_due else 'N/A',
