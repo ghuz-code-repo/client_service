@@ -117,6 +117,11 @@
                     <button type="button" class="btn btn-success" onclick="exportToExcel()">
                         <i class="bi bi-file-earmark-excel me-1"></i> Excel
                     </button>
+                    {% if gateway_has_permission('client-service.applications.import') %}
+                    <button type="button" class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#importModal">
+                        <i class="bi bi-upload me-1"></i> Импорт
+                    </button>
+                    {% endif %}
                 </div>
             </div>
         </form>
@@ -297,6 +302,104 @@
   </div>
 </div>
 
+<!-- Модальное окно импорта заявок -->
+{% if gateway_has_permission('client-service.applications.import') %}
+<div class="modal fade" id="importModal" tabindex="-1" aria-labelledby="importModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-xl">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="importModalLabel"><i class="bi bi-upload me-2"></i>Импорт заявок</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <!-- Шаг 1: Загрузка файла -->
+        <div id="importStep1">
+          <div class="text-center p-4">
+            <div class="mb-3">
+              <a href="{{ url_for('main.import_template') }}" class="btn btn-outline-warning">
+                <i class="bi bi-download me-1"></i> Скачать шаблон импорта
+              </a>
+              <div class="text-muted small mt-1">Шаблон с выпадающими списками. Пустой ID = новая заявка, заполненный = обновление.</div>
+            </div>
+            <hr>
+            <div id="importDropZone" class="border border-2 border-dashed rounded p-5 mb-3" style="cursor:pointer; border-color: var(--gh-gold) !important;">
+              <i class="bi bi-cloud-arrow-up" style="font-size: 3rem; color: var(--gh-gold);"></i>
+              <p class="mt-2 mb-0">Перетащите файл .xlsx сюда или нажмите для выбора</p>
+              <small class="text-muted">Максимум 20 МБ. Используйте шаблон или файл экспорта.</small>
+              <input type="file" id="importFileInput" accept=".xlsx" class="d-none">
+            </div>
+            <div id="importFileName" class="text-muted mb-3" style="display:none;"></div>
+            <div id="importError" class="alert alert-danger" style="display:none;"></div>
+            <button id="importUploadBtn" class="btn btn-primary" disabled>
+              <i class="bi bi-search me-1"></i> Анализировать изменения
+            </button>
+          </div>
+        </div>
+
+        <!-- Шаг 2: Превью изменений -->
+        <div id="importStep2" style="display:none;">
+          <div id="importSummary" class="mb-3"></div>
+          <div id="importErrorsList" class="mb-3" style="display:none;"></div>
+          <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+            <table class="table table-sm table-bordered" id="importPreviewTable">
+              <thead class="table-light sticky-top">
+                <tr>
+                  <th>ID Заявки</th>
+                  <th>Поле</th>
+                  <th>Старое значение</th>
+                  <th><i class="bi bi-arrow-right"></i></th>
+                  <th>Новое значение</th>
+                </tr>
+              </thead>
+              <tbody id="importPreviewBody"></tbody>
+            </table>
+          </div>
+          <!-- Новые заявки -->
+          <div id="importNewAppsSection" style="display:none;" class="mt-3">
+            <h6><i class="bi bi-plus-circle me-1 text-success"></i>Новые заявки для создания</h6>
+            <div class="table-responsive" style="max-height: 250px; overflow-y: auto;">
+              <table class="table table-sm table-bordered">
+                <thead class="table-success sticky-top">
+                  <tr>
+                    <th>Строка</th>
+                    <th>ФИО Клиента</th>
+                    <th>Телефон</th>
+                    <th>Тип</th>
+                    <th>Статус</th>
+                    <th>Ответственный</th>
+                    <th>Источник</th>
+                  </tr>
+                </thead>
+                <tbody id="importNewAppsBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Шаг 3: Результат -->
+        <div id="importStep3" style="display:none;">
+          <div id="importResult" class="text-center p-4"></div>
+        </div>
+
+        <!-- Спиннер -->
+        <div id="importSpinner" class="text-center p-4" style="display:none;">
+          <div class="spinner-border" style="color: var(--gh-gold);" role="status">
+            <span class="visually-hidden">Обработка...</span>
+          </div>
+          <p class="mt-2" id="importSpinnerText">Анализ файла...</p>
+        </div>
+      </div>
+      <div class="modal-footer" id="importFooter">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Закрыть</button>
+        <button type="button" class="btn btn-success" id="importConfirmBtn" style="display:none;" onclick="confirmImport()">
+          <i class="bi bi-check-circle me-1"></i> Применить изменения
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 {% endblock %}
 
 
@@ -451,6 +554,223 @@ function viewApplicationHistory(appId) {
             `;
         });
 }
+
+// ==================== ИМПОРТ ЗАЯВОК ====================
+(function() {
+    const dropZone = document.getElementById('importDropZone');
+    const fileInput = document.getElementById('importFileInput');
+    const uploadBtn = document.getElementById('importUploadBtn');
+    const fileNameDiv = document.getElementById('importFileName');
+    if (!dropZone) return; // нет прав — нет модала
+
+    let selectedFile = null;
+    let currentImportId = null;
+
+    // Drag & Drop
+    dropZone.addEventListener('click', () => fileInput.click());
+    dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('bg-light'); });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('bg-light'));
+    dropZone.addEventListener('drop', e => {
+        e.preventDefault();
+        dropZone.classList.remove('bg-light');
+        if (e.dataTransfer.files.length) selectFile(e.dataTransfer.files[0]);
+    });
+    fileInput.addEventListener('change', () => { if (fileInput.files.length) selectFile(fileInput.files[0]); });
+
+    function selectFile(file) {
+        const errDiv = document.getElementById('importError');
+        errDiv.style.display = 'none';
+        if (!file.name.endsWith('.xlsx')) {
+            errDiv.textContent = 'Допустимый формат: .xlsx';
+            errDiv.style.display = 'block';
+            return;
+        }
+        if (file.size > 20 * 1024 * 1024) {
+            errDiv.textContent = 'Файл слишком большой. Максимум 20 МБ.';
+            errDiv.style.display = 'block';
+            return;
+        }
+        selectedFile = file;
+        fileNameDiv.innerHTML = '<i class="bi bi-file-earmark-check me-1"></i>' + file.name + ' (' + (file.size / 1024).toFixed(1) + ' КБ)';
+        fileNameDiv.style.display = 'block';
+        uploadBtn.disabled = false;
+    }
+
+    uploadBtn.addEventListener('click', () => {
+        if (!selectedFile) return;
+        const formData = new FormData();
+        formData.append('file', selectedFile);
+
+        document.getElementById('importStep1').style.display = 'none';
+        document.getElementById('importSpinner').style.display = 'block';
+        document.getElementById('importSpinnerText').textContent = 'Анализ файла...';
+
+        fetch('{{ url_for("main.import_applications_preview") }}', {
+            method: 'POST',
+            body: formData
+        })
+        .then(r => r.json())
+        .then(data => {
+            document.getElementById('importSpinner').style.display = 'none';
+            if (!data.success) {
+                document.getElementById('importStep1').style.display = 'block';
+                const errDiv = document.getElementById('importError');
+                errDiv.textContent = data.error;
+                errDiv.style.display = 'block';
+                return;
+            }
+            currentImportId = data.import_id;
+            showPreview(data);
+        })
+        .catch(err => {
+            document.getElementById('importSpinner').style.display = 'none';
+            document.getElementById('importStep1').style.display = 'block';
+            const errDiv = document.getElementById('importError');
+            errDiv.textContent = 'Ошибка сети: ' + err.message;
+            errDiv.style.display = 'block';
+        });
+    });
+
+    function showPreview(data) {
+        const step2 = document.getElementById('importStep2');
+        step2.style.display = 'block';
+
+        // Сводка
+        const s = data.summary;
+        document.getElementById('importSummary').innerHTML = `
+            <div class="d-flex gap-3 flex-wrap">
+                ${s.total_applications > 0 ? `<span class="badge bg-primary fs-6">Обновлений: ${s.total_applications} (${s.total_changes} полей)</span>` : ''}
+                ${s.total_new > 0 ? `<span class="badge bg-success fs-6">Новых заявок: ${s.total_new}</span>` : ''}
+                ${s.total_errors > 0 ? `<span class="badge bg-danger fs-6">Ошибок: ${s.total_errors}</span>` : ''}
+                ${s.total_applications === 0 && s.total_new === 0 && s.total_errors === 0 ? '<span class="badge bg-secondary fs-6">Нет изменений</span>' : ''}
+            </div>
+        `;
+
+        // Ошибки
+        if (data.errors.length > 0) {
+            const errorsList = document.getElementById('importErrorsList');
+            let html = '<div class="alert alert-warning"><strong>\u041f\u0440\u043e\u043f\u0443\u0449\u0435\u043d\u043d\u044b\u0435 \u0441\u0442\u0440\u043e\u043a\u0438:</strong><ul class="mb-0 mt-1">';
+            data.errors.forEach(e => {
+                html += `<li>\u0421\u0442\u0440\u043e\u043a\u0430 ${e.row}: ${e.error}</li>`;
+            });
+            html += '</ul></div>';
+            errorsList.innerHTML = html;
+            errorsList.style.display = 'block';
+        }
+
+        // Таблица обновлений
+        const tbody = document.getElementById('importPreviewBody');
+        tbody.innerHTML = '';
+        if (data.changes && data.changes.length > 0) {
+            data.changes.forEach(group => {
+                group.fields.forEach((f, idx) => {
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `
+                        ${idx === 0 ? `<td rowspan="${group.fields.length}" class="fw-bold align-middle">#${group.app_id}</td>` : ''}
+                        <td>${f.field}</td>
+                        <td class="text-muted">${escHtml(f.old)}</td>
+                        <td class="text-center"><i class="bi bi-arrow-right text-primary"></i></td>
+                        <td class="fw-bold" style="color: var(--gh-gold);">${escHtml(f.new)}</td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+            });
+        }
+
+        // Таблица новых заявок
+        if (data.new_apps && data.new_apps.length > 0) {
+            const newSection = document.getElementById('importNewAppsSection');
+            newSection.style.display = 'block';
+            const newBody = document.getElementById('importNewAppsBody');
+            newBody.innerHTML = '';
+            data.new_apps.forEach(app => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td>${app.row}</td>
+                    <td>${escHtml(app.contact_name)}</td>
+                    <td>${escHtml(app.contact_phone)}</td>
+                    <td>${escHtml(app.application_type)}</td>
+                    <td>${escHtml(app.status)}</td>
+                    <td>${escHtml(app.responsible_name)}</td>
+                    <td>${escHtml(app.source)}</td>
+                `;
+                newBody.appendChild(tr);
+            });
+        }
+
+        if (s.total_applications > 0 || s.total_new > 0) {
+            document.getElementById('importConfirmBtn').style.display = 'inline-block';
+        }
+    }
+
+    function escHtml(str) {
+        const div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
+    }
+
+    // Confirm
+    window.confirmImport = function() {
+        if (!currentImportId) return;
+        document.getElementById('importStep2').style.display = 'none';
+        document.getElementById('importConfirmBtn').style.display = 'none';
+        document.getElementById('importSpinner').style.display = 'block';
+        document.getElementById('importSpinnerText').textContent = '\u041f\u0440\u0438\u043c\u0435\u043d\u0435\u043d\u0438\u0435 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0439...';
+
+        fetch('{{ url_for("main.import_applications_confirm") }}', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ import_id: currentImportId })
+        })
+        .then(r => r.json())
+        .then(data => {
+            document.getElementById('importSpinner').style.display = 'none';
+            const resultDiv = document.getElementById('importResult');
+            if (data.success) {
+                resultDiv.innerHTML = `
+                    <i class="bi bi-check-circle" style="font-size: 3rem; color: var(--bs-success);"></i>
+                    <h5 class="mt-2">${data.message}</h5>
+                    <p class="text-muted">\u0421\u0442\u0440\u0430\u043d\u0438\u0446\u0430 \u043e\u0431\u043d\u043e\u0432\u0438\u0442\u0441\u044f \u0430\u0432\u0442\u043e\u043c\u0430\u0442\u0438\u0447\u0435\u0441\u043a\u0438.</p>
+                `;
+                setTimeout(() => location.reload(), 2000);
+            } else {
+                resultDiv.innerHTML = `
+                    <i class="bi bi-exclamation-triangle" style="font-size: 3rem; color: var(--bs-danger);"></i>
+                    <h5 class="mt-2">${data.error}</h5>
+                `;
+            }
+            document.getElementById('importStep3').style.display = 'block';
+        })
+        .catch(err => {
+            document.getElementById('importSpinner').style.display = 'none';
+            const resultDiv = document.getElementById('importResult');
+            resultDiv.innerHTML = `
+                <i class="bi bi-exclamation-triangle" style="font-size: 3rem; color: var(--bs-danger);"></i>
+                <h5 class="mt-2">\u041e\u0448\u0438\u0431\u043a\u0430 \u0441\u0435\u0442\u0438: ${err.message}</h5>
+            `;
+            document.getElementById('importStep3').style.display = 'block';
+        });
+    };
+
+    // Reset при закрытии модала
+    document.getElementById('importModal').addEventListener('hidden.bs.modal', function() {
+        document.getElementById('importStep1').style.display = 'block';
+        document.getElementById('importStep2').style.display = 'none';
+        document.getElementById('importStep3').style.display = 'none';
+        document.getElementById('importSpinner').style.display = 'none';
+        document.getElementById('importConfirmBtn').style.display = 'none';
+        document.getElementById('importError').style.display = 'none';
+        document.getElementById('importErrorsList').style.display = 'none';
+        document.getElementById('importFileName').style.display = 'none';
+        document.getElementById('importNewAppsSection').style.display = 'none';
+        document.getElementById('importNewAppsBody').innerHTML = '';
+        document.getElementById('importPreviewBody').innerHTML = '';
+        selectedFile = null;
+        currentImportId = null;
+        uploadBtn.disabled = true;
+        fileInput.value = '';
+    });
+})();
 
 // Функция экспорта в Excel
 function exportToExcel() {

@@ -4,11 +4,15 @@ import math
 import json
 import io
 import os
+import uuid
+import tempfile
 from datetime import datetime
 from threading import Thread
 from openpyxl import load_workbook, Workbook
 from openpyxl.cell import MergedCell
-from openpyxl.styles import Font, Alignment
+from openpyxl.styles import Font, Alignment, PatternFill
+from openpyxl.worksheet.datavalidation import DataValidation
+from openpyxl.utils import get_column_letter
 from flask import (render_template, request, Blueprint, abort, flash, redirect,
                    url_for, jsonify, current_app, send_file, g)
 from sqlalchemy.orm import selectinload, joinedload
@@ -58,6 +62,8 @@ def sync_permissions():
          "description": "Разрешение на изменение статуса заявок", "category": "applications"},
         {"name": "client-service.applications.export", "displayName": "Экспорт заявок",
          "description": "Разрешение на экспорт заявок в Excel", "category": "applications"},
+        {"name": "client-service.applications.import", "displayName": "Импорт заявок",
+         "description": "Разрешение на массовый импорт и обновление заявок из Excel", "category": "applications"},
         
         # Responsible
         {"name": "client-service.responsible.view", "displayName": "Просмотр ответственных",
@@ -649,6 +655,659 @@ def export_applications():
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
+# ==================== ИМПОРТ ЗАЯВОК ====================
+
+# Обновляемые колонки (заголовок Excel → внутреннее имя)
+IMPORT_UPDATABLE = {
+    'Статус': 'status',
+    'Ответственный': 'responsible',
+    'Источник': 'source',
+    'Срок выполнения': 'due_date',
+    'Последний комментарий': 'log_comment',
+    'Комментарий к заявке': 'comment',
+}
+
+VALID_STATUSES = {'В работе', 'Выполнено', 'Частично выполнено', 'Закрыто', 'Отклонено'}
+VALID_STATUSES_LIST = ['В работе', 'Выполнено', 'Частично выполнено', 'Закрыто', 'Отклонено']
+MAX_IMPORT_FILE_SIZE = 20 * 1024 * 1024  # 20 МБ
+
+# Колонки шаблона импорта
+IMPORT_TEMPLATE_HEADERS = [
+    'ID Заявки', 'ФИО Клиента', 'Телефон клиента', 'Тип заявки',
+    'Статус', 'Ответственный', 'Источник', 'ЖК', 'Дом',
+    'Срок выполнения', 'Комментарий к заявке', 'Последний комментарий'
+]
+
+
+def _create_nc_contact_and_deal(contact_name, contact_phone, client_comment=None):
+    """Создаёт NC-контакт и NC-договор. Возвращает (client, agreement_number).
+    Вызывается внутри транзакции — НЕ делает commit."""
+    min_contact_id = db.session.query(db.func.min(EstateDealsContacts.id)).scalar() or 0
+    new_client_id = min(min_contact_id, 0) - 1
+
+    new_client = EstateDealsContacts(
+        id=new_client_id,
+        contacts_buy_name=contact_name,
+        contacts_buy_phones=contact_phone,
+        client_comment=client_comment
+    )
+    db.session.add(new_client)
+    db.session.flush()
+
+    agreement_number = f"NC-{abs(new_client.id)}"
+    min_deal_id = db.session.query(db.func.min(EstateDeals.id)).scalar() or 0
+    new_deal_id = min(min_deal_id, 0) - 1
+
+    new_deal = EstateDeals(
+        id=new_deal_id,
+        contacts_buy_id=new_client.id,
+        agreement_number=agreement_number,
+        deal_status_name="Без договора",
+        agreement_date=datetime.now().date(),
+        deal_sum=0.0,
+        finances_income_reserved=0.0
+    )
+    db.session.add(new_deal)
+    db.session.flush()
+    return new_client, agreement_number
+
+
+@main.route('/applications/import-template', methods=['GET'])
+@auth_required(permission='client-service.applications.import')
+def import_template():
+    """Скачивание пустого Excel-шаблона импорта с dropdown-списками."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'Импорт заявок'
+
+    # Лист справочника (скрытый) для источников данных
+    ws_ref = wb.create_sheet('Справочник')
+
+    # --- Собираем справочные данные ---
+    rp_names = sorted([rp.full_name for rp in ResponsiblePerson.query.all()])
+    app_type_names = sorted([at.name for at in ApplicationType.query.order_by(ApplicationType.name).all()])
+    sources_list = ['Звонок', 'Email', 'Личный визит', 'Сайт', 'Другое']
+    complexes = [row[0] for row in db.session.execute(
+        db.text('SELECT DISTINCT complex_name FROM estate_houses WHERE complex_name IS NOT NULL AND complex_name != "" ORDER BY complex_name')
+    ).fetchall()]
+    houses = [row[0] for row in db.session.execute(
+        db.text('SELECT DISTINCT name FROM estate_houses WHERE name IS NOT NULL AND name != "" ORDER BY name')
+    ).fetchall()]
+
+    # --- Заполняем лист справочника ---
+    ref_columns = {
+        'A': ('Статусы', VALID_STATUSES_LIST),
+        'B': ('Ответственные', rp_names),
+        'C': ('Типы заявок', app_type_names),
+        'D': ('Источники', sources_list),
+        'E': ('ЖК', complexes),
+        'F': ('Дома', houses),
+    }
+    for col_letter, (header, values) in ref_columns.items():
+        ws_ref[f'{col_letter}1'] = header
+        ws_ref[f'{col_letter}1'].font = Font(bold=True)
+        for i, val in enumerate(values, start=2):
+            ws_ref[f'{col_letter}{i}'] = val
+
+    # --- Заголовки основного листа ---
+    gold_fill = PatternFill(start_color='FFF8DC', end_color='FFF8DC', fill_type='solid')
+    header_font = Font(bold=True)
+    for col_idx, header in enumerate(IMPORT_TEMPLATE_HEADERS, start=1):
+        cell = ws.cell(row=1, column=col_idx, value=header)
+        cell.font = header_font
+        cell.fill = gold_fill
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+
+    # Ширина колонок
+    col_widths = [12, 25, 18, 20, 22, 25, 16, 20, 15, 16, 35, 35]
+    for i, w in enumerate(col_widths, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    # --- Инструкция в строке 2 (пример) ---
+    example_row = [
+        '(пусто=новая)', 'Иванов Иван', '+998901234567', '',
+        '', '', '', '', '', '', 'Описание проблемы', ''
+    ]
+    for col_idx, val in enumerate(example_row, start=1):
+        cell = ws.cell(row=2, column=col_idx, value=val)
+        cell.font = Font(italic=True, color='808080')
+
+    # --- Data Validation (dropdown-списки) ---
+    max_data_rows = 1000  # на сколько строк распространяем
+
+    def add_ref_validation(ws_target, col_letter_target, col_letter_ref, count, col_idx):
+        if count < 1:
+            return
+        formula = f'Справочник!${col_letter_ref}$2:${col_letter_ref}${count + 1}'
+        dv = DataValidation(type='list', formula1=formula, allow_blank=True)
+        dv.error = 'Выберите значение из списка'
+        dv.errorTitle = 'Недопустимое значение'
+        dv.prompt = 'Выберите из списка'
+        dv.promptTitle = IMPORT_TEMPLATE_HEADERS[col_idx - 1]
+        cell_range = f'{col_letter_target}3:{col_letter_target}{max_data_rows}'
+        dv.add(cell_range)
+        ws_target.add_data_validation(dv)
+
+    # Тип заявки (колонка D=4) → Справочник!C
+    add_ref_validation(ws, 'D', 'C', len(app_type_names), 4)
+    # Статус (колонка E=5) → Справочник!A
+    add_ref_validation(ws, 'E', 'A', len(VALID_STATUSES_LIST), 5)
+    # Ответственный (колонка F=6) → Справочник!B
+    add_ref_validation(ws, 'F', 'B', len(rp_names), 6)
+    # Источник (колонка G=7) → Справочник!D
+    add_ref_validation(ws, 'G', 'D', len(sources_list), 7)
+    # ЖК (колонка H=8) → Справочник!E
+    add_ref_validation(ws, 'H', 'E', len(complexes), 8)
+    # Дом (колонка I=9) → Справочник!F
+    add_ref_validation(ws, 'I', 'F', len(houses), 9)
+
+    # --- Комментарий-инструкция на листе справочника ---
+    max_ref_row = max(len(v) for _, v in ref_columns.values()) + 3
+    ws_ref.cell(row=max_ref_row, column=1, value='Инструкция:').font = Font(bold=True)
+    ws_ref.cell(row=max_ref_row + 1, column=1,
+                value='ID Заявки пустой → создание новой заявки (обязательны: ФИО, Телефон, Тип, Ответственный, Комментарий)')
+    ws_ref.cell(row=max_ref_row + 2, column=1,
+                value='ID Заявки заполнен → обновление существующей заявки (изменяются только заполненные поля)')
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    wb.close()
+
+    return send_file(buffer, as_attachment=True,
+                     download_name='Шаблон_импорта_заявок.xlsx',
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+
+def _parse_import_file(filepath):
+    """Парсит загруженный Excel-файл и возвращает список изменений + ошибки."""
+    from .auth_utils import has_permission, get_current_user_id
+
+    wb = load_workbook(filepath, read_only=True, data_only=True)
+    ws = wb.active
+
+    # Ищем строку заголовков (содержащую 'ID Заявки')
+    header_row = None
+    headers = {}
+    for row_idx, row in enumerate(ws.iter_rows(min_row=1, max_row=10, values_only=False), start=1):
+        for cell in row:
+            if cell.value and str(cell.value).strip() == 'ID Заявки':
+                header_row = row_idx
+                break
+        if header_row:
+            for cell in row:
+                if cell.value:
+                    headers[str(cell.value).strip()] = cell.column - 1  # 0-indexed
+            break
+
+    if header_row is None:
+        wb.close()
+        return [], [{'row': 0, 'error': 'Не найден заголовок "ID Заявки". Убедитесь, что файл соответствует формату экспорта.'}]
+
+    id_col = headers.get('ID Заявки')
+    if id_col is None:
+        wb.close()
+        return [], [{'row': 0, 'error': 'Колонка "ID Заявки" не найдена в заголовках.'}]
+
+    # Определяем индексы обновляемых колонок
+    col_map = {}  # internal_name → column_index
+    for excel_name, internal_name in IMPORT_UPDATABLE.items():
+        if excel_name in headers:
+            col_map[internal_name] = headers[excel_name]
+
+    # Загрузим справочники
+    responsible_persons = {rp.full_name.strip().lower(): rp for rp in ResponsiblePerson.query.all()}
+    responsible_by_id = {rp.id: rp for rp in ResponsiblePerson.query.all()}
+
+    # Проверяем права
+    has_admin = has_permission('client-service.applications.view.all')
+    current_gw_id = get_current_user_id()
+    current_responsible = None
+    if current_gw_id:
+        current_responsible = ResponsiblePerson.query.filter_by(gateway_user_id=current_gw_id).first()
+
+    changes = []      # обновления существующих заявок
+    new_apps = []      # создание новых заявок
+    errors = []
+    seen_ids = set()
+
+    # Колонки для создания новых заявок
+    name_col = headers.get('ФИО Клиента')
+    phone_col = headers.get('Телефон клиента')
+    type_col = headers.get('Тип заявки')
+    hc_col = headers.get('ЖК')
+    house_col = headers.get('Дом')
+
+    for row_idx, row in enumerate(ws.iter_rows(min_row=header_row + 1, values_only=True), start=header_row + 1):
+        if not row:
+            continue
+        # Проверяем, есть ли хоть одно непустое значение в строке
+        if all(c is None or str(c).strip() == '' for c in row):
+            continue
+
+        raw_id = row[id_col] if len(row) > id_col else None
+        is_new = raw_id is None or str(raw_id).strip() == ''
+
+        if is_new:
+            # ===== СОЗДАНИЕ НОВОЙ ЗАЯВКИ =====
+            def _get(col_idx):
+                if col_idx is not None and len(row) > col_idx and row[col_idx] is not None:
+                    return str(row[col_idx]).strip()
+                return ''
+
+            contact_name = _get(name_col)
+            contact_phone = _get(phone_col)
+            app_type_name = _get(type_col)
+            new_status = _get(col_map.get('status', -1)) if 'status' in col_map else ''
+            responsible_name = _get(col_map.get('responsible', -1)) if 'responsible' in col_map else ''
+            source_val = _get(col_map.get('source', -1)) if 'source' in col_map else ''
+            comment_val = _get(col_map.get('comment', -1)) if 'comment' in col_map else ''
+            hc_val = _get(hc_col)
+            house_val = _get(house_col)
+
+            # Обязательные поля
+            missing = []
+            if not contact_name: missing.append('ФИО Клиента')
+            if not contact_phone: missing.append('Телефон клиента')
+            if not app_type_name: missing.append('Тип заявки')
+            if not responsible_name: missing.append('Ответственный')
+            if not comment_val: missing.append('Комментарий к заявке')
+            if missing:
+                errors.append({'row': row_idx, 'error': f'Новая заявка: не заполнены обязательные поля: {", ".join(missing)}'})
+                continue
+
+            # Валидация статуса
+            if new_status and new_status not in VALID_STATUSES:
+                errors.append({'row': row_idx, 'error': f'Новая заявка: невалидный статус "{new_status}"'})
+                continue
+
+            # Поиск ответственного
+            matched_rp = responsible_persons.get(responsible_name.lower())
+            if not matched_rp:
+                for name, rp in responsible_persons.items():
+                    if responsible_name.lower() in name or name in responsible_name.lower():
+                        matched_rp = rp
+                        break
+            if not matched_rp:
+                errors.append({'row': row_idx, 'error': f'Новая заявка: ответственный "{responsible_name}" не найден'})
+                continue
+
+            # Срок выполнения
+            due_date_val = None
+            if 'due_date' in col_map:
+                raw_due = row[col_map['due_date']] if len(row) > col_map['due_date'] else None
+                if raw_due and str(raw_due).strip() not in ('', 'N/A', 'None'):
+                    if isinstance(raw_due, datetime):
+                        due_date_val = raw_due.isoformat()
+                    else:
+                        for fmt in ('%Y-%m-%d', '%d.%m.%Y', '%d/%m/%Y'):
+                            try:
+                                due_date_val = datetime.strptime(str(raw_due).strip(), fmt).isoformat()
+                                break
+                            except ValueError:
+                                pass
+
+            new_apps.append({
+                'row': row_idx,
+                'contact_name': contact_name,
+                'contact_phone': contact_phone,
+                'application_type': app_type_name,
+                'status': new_status or 'В работе',
+                'responsible_name': matched_rp.full_name,
+                'responsible_id': matched_rp.id,
+                'source': source_val or 'Импорт',
+                'comment': comment_val,
+                'housing_complex': hc_val,
+                'house_number': house_val,
+                'due_date': due_date_val,
+            })
+            continue
+
+        # ===== ОБНОВЛЕНИЕ СУЩЕСТВУЮЩЕЙ ЗАЯВКИ =====
+        try:
+            app_id = int(raw_id)
+        except (ValueError, TypeError):
+            errors.append({'row': row_idx, 'error': f'Невалидный ID заявки: "{raw_id}"'})
+            continue
+
+        if app_id in seen_ids:
+            errors.append({'row': row_idx, 'error': f'Дубликат ID #{app_id} в файле'})
+            continue
+        seen_ids.add(app_id)
+
+        app = Application.query.get(app_id)
+        if not app:
+            errors.append({'row': row_idx, 'error': f'Заявка #{app_id} не найдена в базе'})
+            continue
+
+        # Проверка прав на эту заявку
+        if not has_admin:
+            is_responsible = current_responsible and current_responsible.id == app.responsible_person_id
+            is_nc = (app.agreement_number and
+                     (app.agreement_number.startswith('NC-') or app.agreement_number == 'SYSTEM-001'))
+            if not (is_responsible or is_nc):
+                errors.append({'row': row_idx, 'error': f'Заявка #{app_id}: нет прав на изменение'})
+                continue
+
+        row_changes = []
+
+        # --- Статус ---
+        if 'status' in col_map:
+            new_val = str(row[col_map['status']]).strip() if row[col_map['status']] else ''
+            if new_val and new_val != (app.status or ''):
+                if new_val not in VALID_STATUSES:
+                    errors.append({'row': row_idx, 'error': f'Заявка #{app_id}: невалидный статус "{new_val}"'})
+                    continue
+                row_changes.append({
+                    'field': 'Статус', 'old': app.status or '', 'new': new_val,
+                    'db_field': 'status'
+                })
+
+        # --- Ответственный ---
+        if 'responsible' in col_map:
+            new_val = str(row[col_map['responsible']]).strip() if row[col_map['responsible']] else ''
+            current_name = app.responsible_person.full_name if app.responsible_person else 'Не назначен'
+            if new_val and new_val != current_name:
+                # Матчинг по имени (case-insensitive)
+                matched = responsible_persons.get(new_val.lower())
+                if not matched:
+                    # Частичный поиск
+                    for name, rp in responsible_persons.items():
+                        if new_val.lower() in name or name in new_val.lower():
+                            matched = rp
+                            break
+                if not matched and new_val.lower() != 'не назначен':
+                    errors.append({'row': row_idx, 'error': f'Заявка #{app_id}: ответственный "{new_val}" не найден'})
+                    continue
+                new_rp_id = matched.id if matched else None
+                if new_rp_id != app.responsible_person_id:
+                    row_changes.append({
+                        'field': 'Ответственный', 'old': current_name,
+                        'new': matched.full_name if matched else 'Не назначен',
+                        'db_field': 'responsible_person_id', 'db_value': new_rp_id
+                    })
+
+        # --- Источник ---
+        if 'source' in col_map:
+            new_val = str(row[col_map['source']]).strip() if row[col_map['source']] else ''
+            current_val = app.source or 'Не указан'
+            if new_val and new_val != current_val and new_val != 'Не указан':
+                row_changes.append({
+                    'field': 'Источник', 'old': current_val, 'new': new_val,
+                    'db_field': 'source'
+                })
+
+        # --- Срок выполнения ---
+        if 'due_date' in col_map:
+            raw_due = row[col_map['due_date']]
+            new_due = None
+            if raw_due and str(raw_due).strip() not in ('', 'N/A', 'None'):
+                if isinstance(raw_due, datetime):
+                    new_due = raw_due
+                else:
+                    for fmt in ('%Y-%m-%d', '%d.%m.%Y', '%d/%m/%Y'):
+                        try:
+                            new_due = datetime.strptime(str(raw_due).strip(), fmt)
+                            break
+                        except ValueError:
+                            pass
+                    if new_due is None:
+                        errors.append({'row': row_idx, 'error': f'Заявка #{app_id}: невалидная дата дедлайна "{raw_due}"'})
+                        continue
+
+            current_due = app.due_date
+            if new_due and (not current_due or abs((new_due - current_due).total_seconds()) > 60):
+                row_changes.append({
+                    'field': 'Срок выполнения',
+                    'old': current_due.strftime('%Y-%m-%d') if current_due else 'N/A',
+                    'new': new_due.strftime('%Y-%m-%d'),
+                    'db_field': 'due_date', 'db_value': new_due.isoformat()
+                })
+
+        # --- Комментарий к заявке ---
+        if 'comment' in col_map:
+            new_val = str(row[col_map['comment']]).strip() if row[col_map['comment']] else ''
+            current_val = app.comment or ''
+            if new_val and new_val != current_val:
+                row_changes.append({
+                    'field': 'Комментарий к заявке',
+                    'old': current_val[:80] + ('...' if len(current_val) > 80 else ''),
+                    'new': new_val[:80] + ('...' if len(new_val) > 80 else ''),
+                    'db_field': 'comment', 'db_value': new_val
+                })
+
+        # --- Последний комментарий (→ ApplicationLog) ---
+        if 'log_comment' in col_map:
+            new_val = str(row[col_map['log_comment']]).strip() if row[col_map['log_comment']] else ''
+            last_log = ApplicationLog.query.filter_by(application_id=app_id) \
+                .order_by(ApplicationLog.timestamp.desc()).first()
+            current_val = last_log.comment if last_log else ''
+            if new_val and new_val != current_val and new_val != 'N/A':
+                row_changes.append({
+                    'field': 'Новый комментарий (лог)',
+                    'old': (current_val[:80] + '...') if current_val and len(current_val) > 80 else (current_val or '—'),
+                    'new': new_val[:80] + ('...' if len(new_val) > 80 else ''),
+                    'db_field': 'log_comment', 'db_value': new_val
+                })
+
+        if row_changes:
+            changes.append({'app_id': app_id, 'row': row_idx, 'fields': row_changes})
+
+    wb.close()
+    return changes, new_apps, errors
+
+
+@main.route('/applications/import', methods=['POST'])
+@auth_required(permission='client-service.applications.import')
+def import_applications_preview():
+    """Шаг 1: загрузка Excel-файла и генерация превью изменений."""
+    if 'file' not in request.files:
+        return jsonify({'success': False, 'error': 'Файл не выбран'}), 400
+
+    file = request.files['file']
+    if not file.filename or not file.filename.endswith('.xlsx'):
+        return jsonify({'success': False, 'error': 'Допустимый формат: .xlsx'}), 400
+
+    # Проверяем размер
+    file.seek(0, 2)
+    size = file.tell()
+    file.seek(0)
+    if size > MAX_IMPORT_FILE_SIZE:
+        return jsonify({'success': False, 'error': f'Файл слишком большой ({size // (1024*1024)} МБ). Максимум 20 МБ.'}), 400
+
+    # Сохраняем во временный файл
+    import_id = str(uuid.uuid4())
+    tmp_dir = os.path.join(tempfile.gettempdir(), 'crm_imports')
+    os.makedirs(tmp_dir, exist_ok=True)
+    tmp_path = os.path.join(tmp_dir, f'{import_id}.xlsx')
+    file.save(tmp_path)
+
+    try:
+        changes, new_apps, errors = _parse_import_file(tmp_path)
+    except Exception as e:
+        os.remove(tmp_path)
+        return jsonify({'success': False, 'error': f'Ошибка чтения файла: {str(e)}'}), 400
+
+    # Считаем сводку
+    total_updates = len(changes)
+    total_fields = sum(len(c['fields']) for c in changes)
+    total_new = len(new_apps)
+
+    return jsonify({
+        'success': True,
+        'import_id': import_id,
+        'summary': {
+            'total_applications': total_updates,
+            'total_changes': total_fields,
+            'total_new': total_new,
+            'total_errors': len(errors)
+        },
+        'changes': changes,
+        'new_apps': new_apps,
+        'errors': errors
+    })
+
+
+@main.route('/applications/import/confirm', methods=['POST'])
+@auth_required(permission='client-service.applications.import')
+def import_applications_confirm():
+    """Шаг 2: применение изменений из загруженного файла."""
+    from .auth_utils import get_or_create_local_user
+
+    data = request.get_json()
+    if not data or 'import_id' not in data:
+        return jsonify({'success': False, 'error': 'import_id не указан'}), 400
+
+    import_id = data['import_id']
+    tmp_dir = os.path.join(tempfile.gettempdir(), 'crm_imports')
+    tmp_path = os.path.join(tmp_dir, f'{import_id}.xlsx')
+
+    if not os.path.exists(tmp_path):
+        return jsonify({'success': False, 'error': 'Файл импорта не найден или истёк. Загрузите заново.'}), 404
+
+    try:
+        changes, new_apps, errors = _parse_import_file(tmp_path)
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'Ошибка повторного чтения файла: {str(e)}'}), 400
+
+    if not changes and not new_apps:
+        os.remove(tmp_path)
+        return jsonify({'success': True, 'applied': 0, 'message': 'Нет изменений для применения.'})
+
+    local_user = get_or_create_local_user()
+    author_id = local_user.id if local_user else None
+
+    applied_count = 0
+    applied_apps = 0
+    created_count = 0
+
+    try:
+        for change_group in changes:
+            app_id = change_group['app_id']
+            app = Application.query.get(app_id)
+            if not app:
+                continue
+
+            log_parts = []
+            new_log_comment = None
+
+            for field_change in change_group['fields']:
+                db_field = field_change['db_field']
+                new_value = field_change.get('db_value', field_change['new'])
+
+                if db_field == 'status':
+                    old_status = app.status
+                    app.status = new_value
+                    app.last_status_change = datetime.now()
+                    if new_value in ('Выполнено', 'Закрыто', 'Отклонено'):
+                        if not app.completed_at:
+                            app.completed_at = datetime.now()
+                    elif old_status in ('Выполнено', 'Закрыто', 'Отклонено'):
+                        app.completed_at = None
+                    log_parts.append(f'Статус: {old_status} → {new_value}')
+
+                elif db_field == 'responsible_person_id':
+                    old_name = app.responsible_person.full_name if app.responsible_person else 'Не назначен'
+                    app.responsible_person_id = new_value
+                    log_parts.append(f'Ответственный: {old_name} → {field_change["new"]}')
+
+                elif db_field == 'source':
+                    old_val = app.source or 'Не указан'
+                    app.source = new_value
+                    log_parts.append(f'Источник: {old_val} → {new_value}')
+
+                elif db_field == 'due_date':
+                    old_due = app.due_date.strftime('%Y-%m-%d') if app.due_date else 'N/A'
+                    app.due_date = datetime.fromisoformat(new_value)
+                    log_parts.append(f'Срок: {old_due} → {app.due_date.strftime("%Y-%m-%d")}')
+
+                elif db_field == 'comment':
+                    app.comment = new_value
+                    log_parts.append('Комментарий к заявке обновлён')
+
+                elif db_field == 'log_comment':
+                    new_log_comment = new_value
+
+                applied_count += 1
+
+            # Создаём запись в логе
+            if log_parts or new_log_comment:
+                action = 'Массовый импорт: ' + '; '.join(log_parts) if log_parts else 'Комментарий через импорт'
+                comment = new_log_comment or '; '.join(log_parts)
+                log_entry = ApplicationLog(
+                    application_id=app_id,
+                    action=action,
+                    comment=comment,
+                    author_id=author_id
+                )
+                db.session.add(log_entry)
+
+            applied_apps += 1
+
+        # ===== СОЗДАНИЕ НОВЫХ ЗАЯВОК =====
+        for new_app_data in new_apps:
+            try:
+                new_client, agreement_number = _create_nc_contact_and_deal(
+                    new_app_data['contact_name'],
+                    new_app_data['contact_phone']
+                )
+
+                # Срок выполнения: из файла или из типа заявки
+                due_date = None
+                if new_app_data.get('due_date'):
+                    due_date = datetime.fromisoformat(new_app_data['due_date'])
+                else:
+                    app_type = ApplicationType.query.filter_by(name=new_app_data['application_type']).first()
+                    if app_type and app_type.execution_days:
+                        from datetime import timedelta
+                        due_date = datetime.now() + timedelta(days=app_type.execution_days)
+
+                new_app = Application(
+                    client_id=new_client.id,
+                    agreement_number=agreement_number,
+                    application_type=new_app_data['application_type'],
+                    comment=new_app_data['comment'],
+                    status=new_app_data['status'],
+                    responsible_person_id=new_app_data['responsible_id'],
+                    creator_id=author_id,
+                    due_date=due_date,
+                    source=new_app_data['source'],
+                    housing_complex=new_app_data['housing_complex'] or None,
+                    house_number=new_app_data['house_number'] or None,
+                )
+                db.session.add(new_app)
+                db.session.flush()
+
+                db.session.add(ApplicationLog(
+                    application=new_app,
+                    action='Заявка создана (импорт)',
+                    comment=f"Клиент: {new_app_data['contact_name']}. Ответственный: {new_app_data['responsible_name']}",
+                    author_id=author_id
+                ))
+                created_count += 1
+            except Exception as e:
+                errors.append({'row': new_app_data['row'], 'error': f'Ошибка создания: {str(e)}'})
+
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': f'Ошибка применения: {str(e)}'}), 500
+    finally:
+        # Удаляем временный файл
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+
+    return jsonify({
+        'success': True,
+        'applied_apps': applied_apps,
+        'applied_changes': applied_count,
+        'created_apps': created_count,
+        'message': f'Обновлено {applied_apps} заявок ({applied_count} полей). Создано {created_count} новых заявок.'
+    })
+
+
 @main.route('/applications')
 @auth_required(any_of=['client-service.applications.view.all', 'client-service.applications.view.own', 'client-service.applications.view.responsible'])
 def applications():
@@ -985,24 +1644,14 @@ def create_general_application():
 
     # Создаем нового клиента для заявки без договора
     try:
-        # Генерируем отрицательный ID, чтобы не конфликтовать с MySQL ID при синхронизации
-        min_contact_id = db.session.query(db.func.min(EstateDealsContacts.id)).scalar() or 0
-        new_client_id = min(min_contact_id, 0) - 1
-        
-        new_client = EstateDealsContacts(
-            id=new_client_id,
-            contacts_buy_name=contact_name,
-            contacts_buy_phones=contact_phone,
+        new_client, agreement_number = _create_nc_contact_and_deal(
+            contact_name, contact_phone,
             client_comment=client_comment if client_comment else None
         )
-        db.session.add(new_client)
-        db.session.flush()  # Получаем ID клиента
-        
         print(f"INFO: Создан новый клиент (без договора): ID={new_client.id}, ФИО={contact_name}")
-        
     except Exception as e:
         db.session.rollback()
-        print(f"ERROR: Не удалось создать клиента: {e}")
+        print(f"ERROR: Не удалось создать клиента/договор: {e}")
         flash(f'Произошла ошибка при создании клиента: {e}', 'danger')
         return redirect(url_for('main.index'))
 
@@ -1014,35 +1663,6 @@ def create_general_application():
     if app_type and app_type.execution_days:
         from datetime import timedelta
         due_date = datetime.now() + timedelta(days=app_type.execution_days)
-
-    # Создаем договор "без договора" для нового клиента
-    try:
-        # Генерируем уникальный номер договора (используем abs для читаемости)
-        agreement_number = f"NC-{abs(new_client.id)}"
-        
-        # Генерируем отрицательный ID для сделки
-        min_deal_id = db.session.query(db.func.min(EstateDeals.id)).scalar() or 0
-        new_deal_id = min(min_deal_id, 0) - 1
-        
-        new_deal = EstateDeals(
-            id=new_deal_id,
-            contacts_buy_id=new_client.id,
-            agreement_number=agreement_number,
-            deal_status_name="Без договора",
-            agreement_date=datetime.now().date(),
-            deal_sum=0.0,
-            finances_income_reserved=0.0
-        )
-        db.session.add(new_deal)
-        db.session.flush()
-        
-        print(f"INFO: Создан договор 'без договора': {agreement_number}")
-        
-    except Exception as e:
-        db.session.rollback()
-        print(f"ERROR: Не удалось создать договор: {e}")
-        flash(f'Произошла ошибка при создании договора: {e}', 'danger')
-        return redirect(url_for('main.index'))
 
     # Создаем заявку с новым клиентом и договором
     new_app = Application(

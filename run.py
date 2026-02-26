@@ -184,6 +184,12 @@ def initialize_app():
                 "Разрешение на экспорт заявок в Excel",
                 "applications"
             )
+            registry.register(
+                "client-service.applications.import",
+                "Импорт заявок",
+                "Разрешение на массовый импорт и обновление заявок из Excel",
+                "applications"
+            )
             
             # Ответственные лица (Responsible)
             registry.register(
