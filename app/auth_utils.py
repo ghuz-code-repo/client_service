@@ -248,9 +248,13 @@ def get_gateway_users():
         service_key = 'client-service'
         api_url = f"{gateway_url}/api/services/{service_key}/users"
         
+        # X-API-Key required for /api/* endpoints
+        api_key = os.getenv('INTERNAL_API_KEY', '')
+        headers = {'X-API-Key': api_key} if api_key else {}
+        
         logger.debug(f"Fetching users for service '{service_key}' from Gateway: {api_url}")
         
-        response = requests.get(api_url, timeout=5)
+        response = requests.get(api_url, headers=headers, timeout=5)
         
         if response.status_code == 200:
             users_data = response.json()
