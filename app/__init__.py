@@ -91,8 +91,10 @@ def create_app(config_class=Config):
         # Аватар пользователя
         avatar_path = request.headers.get('X-User-Avatar', '')
         if avatar_path:
-            # Если путь начинается с /avatar/, это эндпоинт Gateway
-            g.avatar_url = f"http://localhost{avatar_path}"
+            # Строим URL из заголовков reverse proxy (X-Forwarded-Proto, X-Forwarded-Host)
+            scheme = request.headers.get('X-Forwarded-Proto', request.scheme)
+            host = request.headers.get('X-Forwarded-Host', request.headers.get('Host', 'localhost'))
+            g.avatar_url = f"{scheme}://{host}{avatar_path}"
         else:
             g.avatar_url = ''
         
