@@ -412,12 +412,36 @@ def application_card(app_id):
         joinedload(ApplicationLog.author)
     ).order_by(ApplicationLog.timestamp.desc()).all()
 
+    # Загружаем данные по договору (deal → sell → house)
+    deal_info = None
+    if app_obj.agreement_number and not app_obj.agreement_number.startswith('NC-') and app_obj.agreement_number != 'SYSTEM-001':
+        deal = EstateDeals.query.filter_by(
+            agreement_number=app_obj.agreement_number,
+            contacts_buy_id=app_obj.client_id
+        ).first()
+        if deal:
+            sell = EstateSells.query.get(deal.estate_sell_id) if deal.estate_sell_id else None
+            house = EstateHouses.query.get(sell.house_id) if sell and sell.house_id else None
+            deal_info = {
+                'agreement_date': deal.agreement_date,
+                'deal_sum': deal.deal_sum,
+                'deal_area': deal.deal_area,
+                'deal_status': deal.deal_status_name,
+                'complex_name': house.complex_name if house else None,
+                'house_name': house.name if house else None,
+                'entrance': sell.geo_house_entrance if sell else None,
+                'floor': sell.estate_floor if sell else None,
+                'flat_number': sell.geo_flatnum if sell else None,
+                'rooms': sell.estate_rooms if sell else None,
+            }
+
     application_statuses = current_app.config['APPLICATION_STATUSES']
 
     return render_template('application_card.html',
                            app=app_obj,
                            defects=defects,
                            logs=logs,
+                           deal_info=deal_info,
                            application_statuses=application_statuses)
 
 

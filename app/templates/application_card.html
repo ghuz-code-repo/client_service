@@ -143,6 +143,35 @@
             </div>
         </div>
 
+        <!-- Данные по квартире -->
+        {% if deal_info %}
+        <div class="card shadow-sm mb-4 animate-on-scroll" style="animation-delay: 0.15s;">
+            <div class="card-body py-2 px-3">
+                <div class="d-flex flex-wrap align-items-center gap-3">
+                    <span class="d-flex align-items-center" style="color: var(--gh-gold);"><i class="bi bi-building me-1"></i><strong>Квартира:</strong></span>
+                    {% if deal_info.complex_name %}
+                    <span><small class="text-muted">ЖК</small> {{ deal_info.complex_name }}</span>
+                    {% endif %}
+                    {% if deal_info.house_name %}
+                    <span><small class="text-muted">Дом</small> {{ deal_info.house_name }}</span>
+                    {% endif %}
+                    {% if deal_info.entrance %}
+                    <span><small class="text-muted">Подъезд</small> {{ deal_info.entrance }}</span>
+                    {% endif %}
+                    {% if deal_info.floor %}
+                    <span><small class="text-muted">Этаж</small> {{ deal_info.floor }}</span>
+                    {% endif %}
+                    {% if deal_info.flat_number %}
+                    <span><small class="text-muted">Кв.</small> {{ deal_info.flat_number }}</span>
+                    {% endif %}
+                    {% if deal_info.rooms %}
+                    <span><small class="text-muted">Комнат</small> {{ deal_info.rooms }}</span>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
         <!-- Дефекты -->
         {% if defects %}
         <div class="card shadow-sm mb-4 animate-on-scroll" style="animation-delay: 0.2s;">
