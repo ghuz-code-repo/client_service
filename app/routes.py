@@ -416,6 +416,127 @@ def application_card(app_id):
                            application_statuses=application_statuses)
 
 
+def _apply_app_filters(query, args):
+    """Применяет все фильтры заявок к запросу. Единая точка для листинга и экспорта.
+    Возвращает (query, applied_filters_dict) — dict с непустыми значениями фильтров."""
+    filters = {}
+
+    # Фильтр по статусу
+    status = args.get('status', '')
+    if status:
+        query = query.filter(Application.status == status)
+        filters['status'] = status
+
+    # Фильтр по типу заявки
+    app_type = args.get('type', '')
+    if app_type:
+        query = query.filter(Application.application_type == app_type)
+        filters['type'] = app_type
+
+    # Фильтр по ответственному
+    responsible_id = args.get('responsible_id', '')
+    if responsible_id:
+        query = query.filter(Application.responsible_person_id == responsible_id)
+        filters['responsible_id'] = responsible_id
+
+    # Фильтр по источнику
+    source = args.get('source', '')
+    if source:
+        query = query.filter(Application.source == source)
+        filters['source'] = source
+
+    # Фильтр по ЖК
+    housing_complex = args.get('housing_complex', '')
+    if housing_complex:
+        query = query.filter(Application.housing_complex == housing_complex)
+        filters['housing_complex'] = housing_complex
+
+    # Фильтр по дому
+    house_number = args.get('house_number', '')
+    if house_number:
+        query = query.filter(Application.house_number == house_number)
+        filters['house_number'] = house_number
+
+    # Фильтр по ID заявки
+    app_id_filter = args.get('app_id', '').strip()
+    if app_id_filter:
+        try:
+            query = query.filter(Application.id == int(app_id_filter))
+            filters['app_id'] = app_id_filter
+        except ValueError:
+            pass
+
+    # Фильтр по датам создания
+    date_from = args.get('date_from', '')
+    if date_from:
+        try:
+            date_from_obj = datetime.strptime(date_from, '%Y-%m-%d')
+            query = query.filter(Application.created_at >= date_from_obj)
+            filters['date_from'] = date_from
+        except ValueError:
+            pass
+
+    date_to = args.get('date_to', '')
+    if date_to:
+        try:
+            date_to_obj = datetime.strptime(date_to, '%Y-%m-%d').replace(hour=23, minute=59, second=59)
+            query = query.filter(Application.created_at <= date_to_obj)
+            filters['date_to'] = date_to
+        except ValueError:
+            pass
+
+    # Поиск по клиенту, телефону или номеру договора
+    search = args.get('search', '')
+    if search:
+        query = query.join(Application.client).filter(
+            or_(
+                EstateDealsContacts.contacts_buy_name.contains(search),
+                EstateDealsContacts.contacts_buy_phones.contains(search),
+                Application.agreement_number.contains(search)
+            )
+        )
+        filters['search'] = search
+
+    # Фильтр по просроченным
+    overdue = args.get('overdue', '')
+    if overdue == 'yes':
+        query = query.filter(
+            Application.due_date.isnot(None),
+            Application.due_date < datetime.now(),
+            Application.completed_at.is_(None)
+        )
+        filters['overdue'] = 'yes'
+    elif overdue == 'no':
+        query = query.filter(
+            or_(
+                Application.due_date.is_(None),
+                Application.due_date >= datetime.now(),
+                Application.completed_at.isnot(None)
+            )
+        )
+        filters['overdue'] = 'no'
+
+    # Сортировка
+    sort = args.get('sort', 'created_desc')
+    if sort == 'created_desc':
+        query = query.order_by(Application.created_at.desc())
+    elif sort == 'created_asc':
+        query = query.order_by(Application.created_at.asc())
+    elif sort == 'due_desc':
+        query = query.order_by(Application.due_date.desc().nullslast())
+    elif sort == 'due_asc':
+        query = query.order_by(Application.due_date.asc().nullsfirst())
+    elif sort == 'id_desc':
+        query = query.order_by(Application.id.desc())
+    elif sort == 'id_asc':
+        query = query.order_by(Application.id.asc())
+    else:
+        query = query.order_by(Application.created_at.desc())
+    filters['sort'] = sort
+
+    return query, filters
+
+
 @main.route('/export-applications')
 @auth_required(permission='client-service.applications.export')
 def export_applications():
@@ -454,72 +575,8 @@ def export_applications():
         else:
             query = query.filter(Application.id == -1)
     
-    # Применяем те же фильтры, что и в основном маршруте
-    status = request.args.get('status', '')
-    if status:
-        query = query.filter(Application.status == status)
-    
-    app_type = request.args.get('type', '')
-    if app_type:
-        query = query.filter(Application.application_type == app_type)
-    
-    date_from = request.args.get('date_from', '')
-    if date_from:
-        try:
-            date_from_obj = datetime.strptime(date_from, '%Y-%m-%d')
-            query = query.filter(Application.created_at >= date_from_obj)
-        except ValueError:
-            pass
-    
-    date_to = request.args.get('date_to', '')
-    if date_to:
-        try:
-            date_to_obj = datetime.strptime(date_to, '%Y-%m-%d').replace(hour=23, minute=59, second=59)
-            query = query.filter(Application.created_at <= date_to_obj)
-        except ValueError:
-            pass
-    
-    search = request.args.get('search', '')
-    if search:
-        query = query.join(Application.client).filter(
-            or_(
-                EstateDealsContacts.contacts_buy_name.contains(search),
-                Application.agreement_number.contains(search)
-            )
-        )
-    
-    overdue = request.args.get('overdue', '')
-    if overdue == 'yes':
-        query = query.filter(
-            Application.due_date.isnot(None),
-            Application.due_date < datetime.now(),
-            Application.completed_at.is_(None)
-        )
-    elif overdue == 'no':
-        query = query.filter(
-            or_(
-                Application.due_date.is_(None),
-                Application.due_date >= datetime.now(),
-                Application.completed_at.isnot(None)
-            )
-        )
-    
-    # Сортировка
-    sort = request.args.get('sort', 'created_desc')
-    if sort == 'created_desc':
-        query = query.order_by(Application.created_at.desc())
-    elif sort == 'created_asc':
-        query = query.order_by(Application.created_at.asc())
-    elif sort == 'due_desc':
-        query = query.order_by(Application.due_date.desc().nullslast())
-    elif sort == 'due_asc':
-        query = query.order_by(Application.due_date.asc().nullsfirst())
-    elif sort == 'id_desc':
-        query = query.order_by(Application.id.desc())
-    elif sort == 'id_asc':
-        query = query.order_by(Application.id.asc())
-    else:
-        query = query.order_by(Application.created_at.desc())
+    # Применяем все фильтры через общую функцию
+    query, filters = _apply_app_filters(query, request.args)
 
     # Получаем все заявки без пагинации для экспорта
     apps = query.all()
@@ -535,19 +592,30 @@ def export_applications():
     
     # Создаем заголовок с информацией о фильтрах
     filter_info = []
-    if status:
-        filter_info.append(f"Статус: {status}")
-    if app_type:
-        filter_info.append(f"Тип: {app_type}")
-    if date_from:
-        filter_info.append(f"С даты: {date_from}")
-    if date_to:
-        filter_info.append(f"По дату: {date_to}")
-    if search:
-        filter_info.append(f"Поиск: {search}")
-    if overdue == 'yes':
+    if filters.get('status'):
+        filter_info.append(f"Статус: {filters['status']}")
+    if filters.get('type'):
+        filter_info.append(f"Тип: {filters['type']}")
+    if filters.get('responsible_id'):
+        rp = ResponsiblePerson.query.get(filters['responsible_id'])
+        filter_info.append(f"Ответственный: {rp.full_name if rp else filters['responsible_id']}")
+    if filters.get('source'):
+        filter_info.append(f"Источник: {filters['source']}")
+    if filters.get('housing_complex'):
+        filter_info.append(f"ЖК: {filters['housing_complex']}")
+    if filters.get('house_number'):
+        filter_info.append(f"Дом: {filters['house_number']}")
+    if filters.get('app_id'):
+        filter_info.append(f"ID заявки: {filters['app_id']}")
+    if filters.get('date_from'):
+        filter_info.append(f"С даты: {filters['date_from']}")
+    if filters.get('date_to'):
+        filter_info.append(f"По дату: {filters['date_to']}")
+    if filters.get('search'):
+        filter_info.append(f"Поиск: {filters['search']}")
+    if filters.get('overdue') == 'yes':
         filter_info.append("Только просроченные")
-    elif overdue == 'no':
+    elif filters.get('overdue') == 'no':
         filter_info.append("Не просроченные")
     
     if filter_info:
@@ -1420,108 +1488,8 @@ def applications():
         else:
             query = query.filter(Application.id == -1)
     
-    # Применяем фильтры
-    # Фильтр по статусу
-    status = request.args.get('status', '')
-    if status:
-        query = query.filter(Application.status == status)
-    
-    # Фильтр по типу заявки
-    app_type = request.args.get('type', '')
-    if app_type:
-        query = query.filter(Application.application_type == app_type)
-
-    # Фильтр по ответственному
-    responsible_id = request.args.get('responsible_id', '')
-    if responsible_id:
-        query = query.filter(Application.responsible_person_id == responsible_id)
-
-    # Фильтр по источнику
-    source = request.args.get('source', '')
-    if source:
-        query = query.filter(Application.source == source)
-
-    # Фильтр по ЖК
-    housing_complex = request.args.get('housing_complex', '')
-    if housing_complex:
-        query = query.filter(Application.housing_complex == housing_complex)
-
-    # Фильтр по дому
-    house_number = request.args.get('house_number', '')
-    if house_number:
-        query = query.filter(Application.house_number == house_number)
-
-    # Фильтр по ID заявки
-    app_id_filter = request.args.get('app_id', '').strip()
-    if app_id_filter:
-        try:
-            query = query.filter(Application.id == int(app_id_filter))
-        except ValueError:
-            pass
-    
-    # Фильтр по датам создания
-    date_from = request.args.get('date_from', '')
-    if date_from:
-        try:
-            date_from_obj = datetime.strptime(date_from, '%Y-%m-%d')
-            query = query.filter(Application.created_at >= date_from_obj)
-        except ValueError:
-            pass
-    
-    date_to = request.args.get('date_to', '')
-    if date_to:
-        try:
-            date_to_obj = datetime.strptime(date_to, '%Y-%m-%d').replace(hour=23, minute=59, second=59)
-            query = query.filter(Application.created_at <= date_to_obj)
-        except ValueError:
-            pass
-    
-    # Поиск по клиенту, телефону или номеру договора
-    search = request.args.get('search', '')
-    if search:
-        query = query.join(Application.client).filter(
-            or_(
-                EstateDealsContacts.contacts_buy_name.contains(search),
-                EstateDealsContacts.contacts_buy_phones.contains(search),
-                Application.agreement_number.contains(search)
-            )
-        )
-    
-    # Фильтр по просроченным
-    overdue = request.args.get('overdue', '')
-    if overdue == 'yes':
-        # Только просроченные
-        query = query.filter(
-            Application.due_date.isnot(None),
-            Application.due_date < datetime.now(),
-            Application.completed_at.is_(None)
-        )
-    elif overdue == 'no':
-        # Не просроченные
-        query = query.filter(
-            or_(
-                Application.due_date.is_(None),
-                Application.due_date >= datetime.now(),
-                Application.completed_at.isnot(None)
-            )
-        )
-    
-    # Сортировка
-    sort = request.args.get('sort', 'created_desc')
-    if sort == 'created_desc':
-        query = query.order_by(Application.created_at.desc())
-    elif sort == 'created_asc':
-        query = query.order_by(Application.created_at.asc())
-    elif sort == 'due_desc':
-        query = query.order_by(Application.due_date.desc().nullslast())
-    elif sort == 'due_asc':
-        query = query.order_by(Application.due_date.asc().nullsfirst())
-    elif sort == 'id_desc':
-        query = query.order_by(Application.id.desc())
-    elif sort == 'id_asc':
-        query = query.order_by(Application.id.asc())
-    else:
-        query = query.order_by(Application.created_at.desc())
+    # Применяем все фильтры через общую функцию
+    query, filters = _apply_app_filters(query, request.args)
 
     # Пагинация
     apps_paginated = query.paginate(page=page, per_page=20)

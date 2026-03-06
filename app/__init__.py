@@ -51,6 +51,8 @@ def create_app(config_class=Config):
         engine = db.engine
         if 'sqlite' in str(engine.url):
             event.listen(engine, 'connect', _set_sqlite_pragmas)
+            # Гарантируем наличие таблиц перед созданием индексов
+            db.create_all()
             # Создаём критические индексы (IF NOT EXISTS — безопасно при каждом запуске)
             with engine.connect() as conn:
                 _set_sqlite_pragmas(conn.connection.dbapi_connection, None)
