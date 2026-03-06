@@ -247,6 +247,29 @@
         _form: null,
         _ignoreSet: null,
 
+        /** Проверяет, включено ли сохранение фильтров (по умолчанию — да). */
+        isPersistEnabled: function() {
+            var val = localStorage.getItem('crm_filters_persist');
+            return val === null || val === 'true';
+        },
+
+        /** Переключает режим сохранения фильтров. */
+        togglePersist: function(enabled) {
+            localStorage.setItem('crm_filters_persist', enabled ? 'true' : 'false');
+            if (!enabled) {
+                // Очищаем все сохранённые фильтры
+                Object.keys(sessionStorage).forEach(function(k) {
+                    if (k.indexOf('crm_filters_') === 0) sessionStorage.removeItem(k);
+                });
+            }
+        },
+
+        /** Синхронизирует состояние чекбокса переключателя (вызывается на DOMContentLoaded). */
+        syncToggleUI: function() {
+            var cb = document.getElementById('persistFiltersToggle');
+            if (cb) cb.checked = this.isPersistEnabled();
+        },
+
         /**
          * Инициализация для конкретной страницы.
          * @param {string} pageKey  — уникальный ключ ('clients', 'applications')
@@ -262,6 +285,7 @@
             this._form = form;
             this._ignoreSet = ignoreSet;
 
+            var persist = this.isPersistEnabled();
             var urlParams = new URLSearchParams(window.location.search);
             var hasQueryString = window.location.search.length > 1; // "?" минимум
 
@@ -273,19 +297,22 @@
             var hasActiveFilters = toSave.toString().length > 0;
 
             if (hasQueryString) {
-                // Форма была отправлена — сохраняем текущее состояние
-                // (если все фильтры пустые — очищаем sessionStorage)
-                if (hasActiveFilters) {
-                    sessionStorage.setItem(key, toSave.toString());
-                } else {
-                    sessionStorage.removeItem(key);
+                // Форма была отправлена — сохраняем текущее состояние (если persist включён)
+                if (persist) {
+                    if (hasActiveFilters) {
+                        sessionStorage.setItem(key, toSave.toString());
+                    } else {
+                        sessionStorage.removeItem(key);
+                    }
                 }
             } else {
                 // Переход по ссылке / «Назад» без query string — восстанавливаем
-                var saved = sessionStorage.getItem(key);
-                if (saved) {
-                    window.location.replace(window.location.pathname + '?' + saved);
-                    return;
+                if (persist) {
+                    var saved = sessionStorage.getItem(key);
+                    if (saved) {
+                        window.location.replace(window.location.pathname + '?' + saved);
+                        return;
+                    }
                 }
             }
 
@@ -298,6 +325,9 @@
                 el.addEventListener('change', function() { self._hl(el, ignoreSet); });
                 el.addEventListener('input',  function() { self._hl(el, ignoreSet); });
             });
+
+            // Синхронизация UI переключателя
+            this.syncToggleUI();
         },
 
         /** Повторная подсветка (вызывать после AJAX-загрузки select'ов). */

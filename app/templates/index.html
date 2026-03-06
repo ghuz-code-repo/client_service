@@ -19,11 +19,15 @@
             <div class="row g-3">
                 <div class="col-md-3">
                     <label for="search" class="form-label">Поиск</label>
-                    <input type="text" class="form-control" id="search" name="search" placeholder="ФИО, телефон, договор..." value="{{ filter_params.get('search', '') }}">
+                    <input type="text" class="form-control" id="search" name="search" placeholder="ФИО, телефон..." value="{{ filter_params.get('search', '') }}">
                 </div>
                 <div class="col-md-2">
                     <label for="client_id" class="form-label">ID клиента</label>
                     <input type="number" class="form-control" id="client_id" name="client_id" placeholder="ID" value="{{ filter_params.get('client_id', '') }}">
+                </div>
+                <div class="col-md-2">
+                    <label for="agreement_number" class="form-label">№ Договора</label>
+                    <input type="text" class="form-control" id="agreement_number" name="agreement_number" placeholder="Номер договора" value="{{ filter_params.get('agreement_number', '') }}">
                 </div>
                 <div class="col-md-3">
                     <label for="complex_name" class="form-label">Жилой комплекс</label>
@@ -98,6 +102,11 @@
                     <input type="date" class="form-control" id="date_to" name="date_to" value="{{ filter_params.get('date_to', '') }}">
                 </div>
                 <div class="col-md-8 d-flex align-items-end justify-content-end gap-2">
+                    <div class="form-check form-switch me-3 d-flex align-items-center">
+                        <input class="form-check-input" type="checkbox" id="persistFiltersToggle" checked
+                               onchange="CrmFilters.togglePersist(this.checked)">
+                        <label class="form-check-label ms-2" for="persistFiltersToggle">Сохранять фильтры</label>
+                    </div>
                     <button type="submit" class="btn btn-primary">
                         <i class="bi bi-filter me-1"></i> Применить
                     </button>

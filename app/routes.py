@@ -169,6 +169,11 @@ def build_client_filters(args):
         where_parts.append("(c.contacts_buy_name LIKE :search OR c.contacts_buy_phones LIKE :search OR d.agreement_number LIKE :search)")
         params['search'] = f'%{search_query}%'
 
+    agreement_number = args.get('agreement_number', '').strip()
+    if agreement_number:
+        where_parts.append("EXISTS (SELECT 1 FROM estate_deals d2 WHERE d2.contacts_buy_id = c.id AND d2.agreement_number LIKE :agreement_number)")
+        params['agreement_number'] = f'%{agreement_number}%'
+
     client_id = args.get('client_id', '').strip()
     if client_id:
         where_parts.append("c.id = :client_id")
