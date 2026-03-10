@@ -149,6 +149,12 @@ def initialize_app():
                 "applications"
             )
             registry.register(
+                "client-service.applications.view.responsible",
+                "Просмотр заявок где ответственный",
+                "Разрешение на просмотр заявок где пользователь назначен ответственным",
+                "applications"
+            )
+            registry.register(
                 "client-service.applications.create",
                 "Создание заявок",
                 "Разрешение на создание новых заявок",
@@ -241,6 +247,20 @@ def initialize_app():
                 "Просмотр логов",
                 "Доступ к системным логам",
                 "admin"
+            )
+            
+            # Отчеты (Reports)
+            registry.register(
+                "client-service.reports.view",
+                "Просмотр отчетов",
+                "Разрешение на просмотр и генерацию отчетов",
+                "reports"
+            )
+            registry.register(
+                "client-service.reports.download",
+                "Скачивание отчетов",
+                "Разрешение на скачивание отчетов в Excel",
+                "reports"
             )
             
             print(f"✅ Registered {len(registry.get_all_permissions())} permissions")
