@@ -4,14 +4,17 @@ import math
 import json
 import io
 import os
+import uuid
+import tempfile
 from datetime import datetime
 from threading import Thread
 from openpyxl import load_workbook, Workbook
 from openpyxl.cell import MergedCell
-from openpyxl.styles import Font, Alignment
+from openpyxl.styles import Font, Alignment, PatternFill
+from openpyxl.worksheet.datavalidation import DataValidation
+from openpyxl.utils import get_column_letter
 from flask import (render_template, request, Blueprint, abort, flash, redirect,
-                   url_for, jsonify, current_app, send_file)
-from flask_login import login_required, current_user
+                   url_for, jsonify, current_app, send_file, g)
 from sqlalchemy.orm import selectinload, joinedload
 from sqlalchemy import text
 from flask_mail import Message
@@ -21,10 +24,81 @@ from .models import (User, EstateDealsContacts, EstateDeals, EstateSells, Client
                      Application, Defect, ApplicationLog, ResponsiblePerson, EstateHouses, responsible_assignments,
                      DefectType, EmailLog, ApplicationType)
 from .email_utils import generate_and_send_email
-from .decorators import permission_required, admin_required
+from .decorators import permission_required, admin_required, auth_required  # Import auth_required
 from sqlalchemy import or_
 
 main = Blueprint('main', __name__)
+
+
+@main.route('/health')
+def health():
+    """Health check endpoint for Docker health checks."""
+    return {'status': 'ok', 'service': 'client-service'}, 200
+
+
+@main.route('/api/sync/permissions')
+def sync_permissions():
+    """
+    Endpoint для синхронизации permissions с auth-service (PULL-модель).
+    Auth-service вызывает этот endpoint для получения списка permissions.
+    """
+    permissions = [
+        # Applications
+        {"name": "client-service.applications.view.all", "displayName": "Просмотр всех заявок", 
+         "description": "Разрешение на просмотр всех заявок в системе", "category": "applications"},
+        {"name": "client-service.applications.view.own", "displayName": "Просмотр своих заявок", 
+         "description": "Разрешение на просмотр только созданных пользователем заявок", "category": "applications"},
+        {"name": "client-service.applications.view.responsible", "displayName": "Просмотр заявок где ответственный", 
+         "description": "Разрешение на просмотр заявок где пользователь назначен ответственным", "category": "applications"},
+        {"name": "client-service.applications.create", "displayName": "Создание заявок",
+         "description": "Разрешение на создание новых заявок", "category": "applications"},
+        {"name": "client-service.applications.edit", "displayName": "Редактирование заявок",
+         "description": "Разрешение на редактирование заявок", "category": "applications"},
+        {"name": "client-service.applications.delete", "displayName": "Удаление заявок",
+         "description": "Разрешение на удаление заявок", "category": "applications"},
+        {"name": "client-service.applications.assign", "displayName": "Назначение ответственных",
+         "description": "Разрешение на назначение ответственных", "category": "applications"},
+        {"name": "client-service.applications.status.change", "displayName": "Изменение статуса",
+         "description": "Разрешение на изменение статуса заявок", "category": "applications"},
+        {"name": "client-service.applications.export", "displayName": "Экспорт заявок",
+         "description": "Разрешение на экспорт заявок в Excel", "category": "applications"},
+        {"name": "client-service.applications.import", "displayName": "Импорт заявок",
+         "description": "Разрешение на массовый импорт и обновление заявок из Excel", "category": "applications"},
+        
+        # Responsible
+        {"name": "client-service.responsible.view", "displayName": "Просмотр ответственных",
+         "description": "Разрешение на просмотр ответственных лиц", "category": "responsible"},
+        {"name": "client-service.responsible.create", "displayName": "Создание ответственных",
+         "description": "Разрешение на создание ответственных лиц", "category": "responsible"},
+        {"name": "client-service.responsible.edit", "displayName": "Редактирование ответственных",
+         "description": "Разрешение на редактирование ответственных лиц", "category": "responsible"},
+        {"name": "client-service.responsible.delete", "displayName": "Удаление ответственных",
+         "description": "Разрешение на удаление ответственных лиц", "category": "responsible"},
+        
+        # Admin
+        {"name": "client-service.admin.panel", "displayName": "Панель администратора",
+         "description": "Доступ к панели администратора", "category": "admin"},
+        {"name": "client-service.admin.users", "displayName": "Управление пользователями",
+         "description": "Управление пользователями системы", "category": "admin"},
+        {"name": "client-service.admin.settings", "displayName": "Настройки системы",
+         "description": "Управление настройками системы", "category": "admin"},
+        {"name": "client-service.admin.logs", "displayName": "Просмотр логов",
+         "description": "Доступ к системным логам", "category": "admin"},
+        
+        # Reports
+        {"name": "client-service.reports.view", "displayName": "Просмотр отчетов",
+         "description": "Разрешение на просмотр и генерацию отчетов", "category": "reports"},
+        {"name": "client-service.reports.download", "displayName": "Скачивание отчетов",
+         "description": "Разрешение на скачивание отчетов в Excel", "category": "reports"},
+    ]
+    
+    return {
+        'success': True,
+        'permissions': permissions,
+        'service_key': 'client-service',
+        'total': len(permissions)
+    }, 200
+
 
 def send_email_async(app, application_id):
     """
@@ -76,30 +150,133 @@ class SQLPagination:
                 last = num
 
 
-@main.route('/client-service/')
-@login_required
-def index():
-    page = request.args.get('page', 1, type=int)
-    search_query = request.args.get('search', '')
-    per_page = 100
-    offset = (page - 1) * per_page
+def build_client_filters(args):
+    """
+    Парсит query-параметры и строит SQL-фильтры для страницы клиентов.
+    
+    Возвращает (where_parts: list[str], params: dict, has_app_filter: bool)
+    where_parts — дополнительные условия для WHERE
+    params — параметры для SQL
+    has_app_filter — нужен ли EXISTS подзапрос к applications
+    """
+    where_parts = []
+    app_conditions = []
     params = {}
-    from_clause = "FROM estate_deals_contacts c JOIN estate_deals d ON c.id=d.contacts_buy_id"
-    where_clause = "WHERE c.contacts_buy_name IS NOT NULL AND c.contacts_buy_name!='' AND c.contacts_buy_phones IS NOT NULL AND c.contacts_buy_phones!='' AND d.agreement_number IS NOT NULL AND TRIM(d.agreement_number)!=''"
+
+    # --- Фильтры по клиенту/договору ---
+    search_query = args.get('search', '').strip()
     if search_query:
-        where_clause += " AND (c.contacts_buy_name LIKE :search OR d.agreement_number LIKE :search)"
+        where_parts.append("(c.contacts_buy_name LIKE :search OR c.contacts_buy_phones LIKE :search OR d.agreement_number LIKE :search)")
         params['search'] = f'%{search_query}%'
 
+    agreement_number = args.get('agreement_number', '').strip()
+    if agreement_number:
+        where_parts.append("EXISTS (SELECT 1 FROM estate_deals d2 WHERE d2.contacts_buy_id = c.id AND d2.agreement_number LIKE :agreement_number)")
+        params['agreement_number'] = f'%{agreement_number}%'
+
+    client_id = args.get('client_id', '').strip()
+    if client_id:
+        where_parts.append("c.id = :client_id")
+        params['client_id'] = client_id
+
+    complex_name = args.get('complex_name', '').strip()
+    if complex_name:
+        where_parts.append("h.complex_name = :complex_name")
+        params['complex_name'] = complex_name
+
+    house_name = args.get('house_name', '').strip()
+    if house_name:
+        where_parts.append("h.name = :house_name")
+        params['house_name'] = house_name
+
+    # --- Фильтры по заявкам (через EXISTS подзапрос) ---
+    app_status = args.get('app_status', '').strip()
+    if app_status:
+        app_conditions.append("a.status = :app_status")
+        params['app_status'] = app_status
+
+    app_type = args.get('app_type', '').strip()
+    if app_type:
+        app_conditions.append("a.application_type = :app_type")
+        params['app_type'] = app_type
+
+    responsible_id = args.get('responsible_id', '').strip()
+    if responsible_id:
+        app_conditions.append("a.responsible_person_id = :responsible_id")
+        params['responsible_id'] = responsible_id
+
+    date_from = args.get('date_from', '').strip()
+    if date_from:
+        app_conditions.append("a.created_at >= :date_from")
+        params['date_from'] = date_from
+
+    date_to = args.get('date_to', '').strip()
+    if date_to:
+        app_conditions.append("a.created_at < date(:date_to, '+1 day')")
+        params['date_to'] = date_to
+
+    overdue = args.get('overdue', '').strip()
+    if overdue == 'yes':
+        app_conditions.append("a.due_date IS NOT NULL AND a.completed_at IS NULL AND a.due_date < datetime('now')")
+    elif overdue == 'no':
+        app_conditions.append("(a.due_date IS NULL OR a.completed_at IS NOT NULL OR a.due_date >= datetime('now'))")
+
+    app_source = args.get('app_source', '').strip()
+    if app_source:
+        app_conditions.append("a.source = :app_source")
+        params['app_source'] = app_source
+
+    has_app_filter = len(app_conditions) > 0
+    if has_app_filter:
+        exists_clause = "EXISTS (SELECT 1 FROM applications a WHERE a.client_id = c.id AND " + " AND ".join(app_conditions) + ")"
+        where_parts.append(exists_clause)
+
+    return where_parts, params, has_app_filter
+
+
+@main.route('/')
+@auth_required(any_of=['client-service.applications.view.all', 'client-service.applications.view.own', 'client-service.applications.view.responsible'])
+def index():
+    page = request.args.get('page', 1, type=int)
+    per_page = 100
+    offset = (page - 1) * per_page
+
+    # --- Построение фильтров ---
+    extra_where, params, has_app_filter = build_client_filters(request.args)
+
+    # Базовые условия (клиент с именем, телефоном и договором)
+    base_conditions = [
+        "c.contacts_buy_name IS NOT NULL", "c.contacts_buy_name!=''",
+        "c.contacts_buy_phones IS NOT NULL", "c.contacts_buy_phones!=''",
+        "d.agreement_number IS NOT NULL", "d.agreement_number!=''"
+    ]
+
+    # Если фильтруем по ЖК/дому, нужен JOIN на sells/houses уже в подзапросе пагинации
+    need_house_join = bool(request.args.get('complex_name', '').strip() or request.args.get('house_name', '').strip())
+
+    from_clause = "FROM estate_deals_contacts c JOIN estate_deals d ON c.id=d.contacts_buy_id"
+    if need_house_join:
+        from_clause += " LEFT JOIN estate_sells s ON d.estate_sell_id=s.estate_sell_id LEFT JOIN estate_houses h ON s.house_id=h.house_id"
+
+    all_conditions = base_conditions + extra_where
+    where_clause = "WHERE " + " AND ".join(all_conditions)
+
+    # COUNT
     count_sql = f"SELECT COUNT(DISTINCT c.id) {from_clause} {where_clause}"
     total_clients = db.session.execute(text(count_sql), params).scalar() or 0
+
+    # DATA
     data_sql = f"""
-        SELECT c.id AS client_id,c.contacts_buy_name,c.contacts_buy_phones,d.agreement_number,d.deal_sum,d.finances_income_reserved,s.estate_floor,s.estate_riser,s.geo_flatnum,s.estate_rooms,h.complex_name,h.name as house_name
+        SELECT c.id AS client_id,c.contacts_buy_name,c.contacts_buy_phones,
+               d.agreement_number,d.deal_sum,d.finances_income_reserved,
+               s.estate_floor,s.estate_riser,s.geo_flatnum,s.estate_rooms,
+               h.complex_name,h.name as house_name
         FROM estate_deals_contacts c
         JOIN estate_deals d ON c.id=d.contacts_buy_id
         LEFT JOIN estate_sells s ON d.estate_sell_id=s.estate_sell_id
         LEFT JOIN estate_houses h ON s.house_id=h.house_id
         JOIN(SELECT DISTINCT c.id {from_clause} {where_clause} ORDER BY c.contacts_buy_name LIMIT :limit OFFSET :offset) AS page_ids ON c.id=page_ids.id
-        WHERE d.agreement_number IS NOT NULL AND TRIM(d.agreement_number)!=''
+        WHERE d.agreement_number IS NOT NULL AND d.agreement_number!=''
     """
     params['limit'], params['offset'] = per_page, offset
     all_data = db.session.execute(text(data_sql), params).mappings().all()
@@ -135,23 +312,37 @@ def index():
 
     pagination = SQLPagination(client_list, page, per_page, total_clients)
     
-    # Получаем данные для модального окна создания заявки без клиента
+    # Получаем данные для модального окна и фильтров
     application_types = ApplicationType.query.order_by(ApplicationType.name).all()
     defect_types_query = DefectType.query.order_by(DefectType.name).all()
     defect_types = [{'id': dt.id, 'name': dt.name} for dt in defect_types_query]
     responsible_persons = ResponsiblePerson.query.order_by(ResponsiblePerson.full_name).all()
-    
+
+    # Список статусов для фильтра
+    app_statuses = ['В работе', 'Выполнено', 'Частично выполнено', 'Закрыто', 'Отклонено']
+    # Список источников для фильтра
+    app_sources = ['Звонок', 'Email', 'Личный визит', 'Сайт', 'Другое']
+
+    # Собираем активные фильтры для передачи в пагинацию
+    filter_keys = ['search', 'client_id', 'complex_name', 'house_name',
+                   'app_status', 'app_type', 'responsible_id', 'date_from', 'date_to',
+                   'overdue', 'app_source']
+    filter_params = {k: request.args.get(k, '') for k in filter_keys if request.args.get(k, '').strip()}
+
     return render_template('index.html', 
                          clients=client_list, 
                          pagination=pagination, 
-                         search_query=search_query,
+                         search_query=request.args.get('search', ''),
+                         filter_params=filter_params,
                          application_types=application_types,
+                         app_statuses=app_statuses,
+                         app_sources=app_sources,
                          defect_types=defect_types,
                          responsible_persons=responsible_persons)
 
 
-@main.route('/client-service/client/<int:client_id>')
-@login_required
+@main.route('/client/<signed_int:client_id>')
+@auth_required(any_of=['client-service.applications.view.all', 'client-service.applications.view.own', 'client-service.applications.view.responsible'])
 def client_card(client_id):
     contact = EstateDealsContacts.query.get_or_404(client_id)
     deals_for_client = contact.deals.options(selectinload(EstateDeals.sell).selectinload(EstateSells.house)).all()
@@ -183,69 +374,167 @@ def client_card(client_id):
                            application_types=application_types,
                            application_statuses=application_statuses,
                            warranty_info=warranty_info,
-                           current_date=current_date)
+                           current_date=current_date,
+                           client_comment=contact.client_comment)
 
-@main.route('/client-service/export-applications')
-@login_required
-def export_applications():
-    """Экспорт заявок в Excel с учетом всех фильтров"""
-    # Базовый запрос с предзагрузкой связанных данных
-    query = Application.query.options(
+
+@main.route('/application/<int:app_id>')
+@auth_required(any_of=['client-service.applications.view.all', 'client-service.applications.view.own', 'client-service.applications.view.responsible'])
+def application_card(app_id):
+    """Карточка заявки — детальный просмотр"""
+    from .auth_utils import has_permission, get_current_user_id, get_or_create_local_user
+
+    app_obj = Application.query.options(
         joinedload(Application.client),
         joinedload(Application.responsible_person),
         joinedload(Application.creator),
-        joinedload(Application.defects)
-    )
+    ).get_or_404(app_id)
 
-    # Фильтрация заявок в зависимости от роли
-    if not current_user.has_role('Админ'):
-        created_by_me = Application.creator_id == current_user.id
-        responsible_for = Application.responsible_person_id == (
-            current_user.responsible_person_profile.id if current_user.responsible_person_profile else -1
-        )
-        query = query.filter(or_(created_by_me, responsible_for))
-    
-    # Применяем те же фильтры, что и в основном маршруте
-    status = request.args.get('status', '')
+    # Проверка доступа: все / свои / ответственный / NC-заявки
+    if not has_permission('client-service.applications.view.all'):
+        current_gateway_user_id = get_current_user_id()
+        local_user = get_or_create_local_user(commit=True) if current_gateway_user_id else None
+        allowed = False
+        if local_user and has_permission('client-service.applications.view.own') and app_obj.creator_id == local_user.id:
+            allowed = True
+        if current_gateway_user_id and has_permission('client-service.applications.view.responsible'):
+            rp = ResponsiblePerson.query.filter_by(gateway_user_id=current_gateway_user_id).first()
+            if rp and rp.id == app_obj.responsible_person_id:
+                allowed = True
+        # NC/SYSTEM-001 заявки доступны всем авторизованным
+        if app_obj.agreement_number and (app_obj.agreement_number.startswith('NC-') or app_obj.agreement_number == 'SYSTEM-001'):
+            allowed = True
+        if not allowed:
+            abort(403)
+
+    defects = Defect.query.filter_by(application_id=app_id).all()
+    logs = ApplicationLog.query.filter_by(application_id=app_id).options(
+        joinedload(ApplicationLog.author)
+    ).order_by(ApplicationLog.timestamp.desc()).all()
+
+    # Загружаем данные по договору (deal → sell → house)
+    deal_info = None
+    if app_obj.agreement_number and not app_obj.agreement_number.startswith('NC-') and app_obj.agreement_number != 'SYSTEM-001':
+        deal = EstateDeals.query.filter_by(
+            agreement_number=app_obj.agreement_number,
+            contacts_buy_id=app_obj.client_id
+        ).first()
+        if deal:
+            sell = EstateSells.query.get(deal.estate_sell_id) if deal.estate_sell_id else None
+            house = EstateHouses.query.get(sell.house_id) if sell and sell.house_id else None
+            deal_info = {
+                'agreement_date': deal.agreement_date,
+                'deal_sum': deal.deal_sum,
+                'deal_area': deal.deal_area,
+                'deal_status': deal.deal_status_name,
+                'complex_name': house.complex_name if house else None,
+                'house_name': house.name if house else None,
+                'entrance': sell.geo_house_entrance if sell else None,
+                'floor': sell.estate_floor if sell else None,
+                'flat_number': sell.geo_flatnum if sell else None,
+                'rooms': sell.estate_rooms if sell else None,
+            }
+
+    application_statuses = current_app.config['APPLICATION_STATUSES']
+
+    return render_template('application_card.html',
+                           app=app_obj,
+                           defects=defects,
+                           logs=logs,
+                           deal_info=deal_info,
+                           application_statuses=application_statuses)
+
+
+def _apply_app_filters(query, args):
+    """Применяет все фильтры заявок к запросу. Единая точка для листинга и экспорта.
+    Возвращает (query, applied_filters_dict) — dict с непустыми значениями фильтров."""
+    filters = {}
+
+    # Фильтр по статусу
+    status = args.get('status', '')
     if status:
         query = query.filter(Application.status == status)
-    
-    app_type = request.args.get('type', '')
+        filters['status'] = status
+
+    # Фильтр по типу заявки
+    app_type = args.get('type', '')
     if app_type:
         query = query.filter(Application.application_type == app_type)
-    
-    date_from = request.args.get('date_from', '')
+        filters['type'] = app_type
+
+    # Фильтр по ответственному
+    responsible_id = args.get('responsible_id', '')
+    if responsible_id:
+        query = query.filter(Application.responsible_person_id == responsible_id)
+        filters['responsible_id'] = responsible_id
+
+    # Фильтр по источнику
+    source = args.get('source', '')
+    if source:
+        query = query.filter(Application.source == source)
+        filters['source'] = source
+
+    # Фильтр по ЖК
+    housing_complex = args.get('housing_complex', '')
+    if housing_complex:
+        query = query.filter(Application.housing_complex == housing_complex)
+        filters['housing_complex'] = housing_complex
+
+    # Фильтр по дому
+    house_number = args.get('house_number', '')
+    if house_number:
+        query = query.filter(Application.house_number == house_number)
+        filters['house_number'] = house_number
+
+    # Фильтр по ID заявки
+    app_id_filter = args.get('app_id', '').strip()
+    if app_id_filter:
+        try:
+            query = query.filter(Application.id == int(app_id_filter))
+            filters['app_id'] = app_id_filter
+        except ValueError:
+            pass
+
+    # Фильтр по датам создания
+    date_from = args.get('date_from', '')
     if date_from:
         try:
             date_from_obj = datetime.strptime(date_from, '%Y-%m-%d')
             query = query.filter(Application.created_at >= date_from_obj)
+            filters['date_from'] = date_from
         except ValueError:
             pass
-    
-    date_to = request.args.get('date_to', '')
+
+    date_to = args.get('date_to', '')
     if date_to:
         try:
             date_to_obj = datetime.strptime(date_to, '%Y-%m-%d').replace(hour=23, minute=59, second=59)
             query = query.filter(Application.created_at <= date_to_obj)
+            filters['date_to'] = date_to
         except ValueError:
             pass
-    
-    search = request.args.get('search', '')
+
+    # Поиск по клиенту, телефону или номеру договора
+    search = args.get('search', '')
     if search:
         query = query.join(Application.client).filter(
             or_(
                 EstateDealsContacts.contacts_buy_name.contains(search),
+                EstateDealsContacts.contacts_buy_phones.contains(search),
                 Application.agreement_number.contains(search)
             )
         )
-    
-    overdue = request.args.get('overdue', '')
+        filters['search'] = search
+
+    # Фильтр по просроченным
+    overdue = args.get('overdue', '')
     if overdue == 'yes':
         query = query.filter(
             Application.due_date.isnot(None),
             Application.due_date < datetime.now(),
             Application.completed_at.is_(None)
         )
+        filters['overdue'] = 'yes'
     elif overdue == 'no':
         query = query.filter(
             or_(
@@ -254,9 +543,10 @@ def export_applications():
                 Application.completed_at.isnot(None)
             )
         )
-    
+        filters['overdue'] = 'no'
+
     # Сортировка
-    sort = request.args.get('sort', 'created_desc')
+    sort = args.get('sort', 'created_desc')
     if sort == 'created_desc':
         query = query.order_by(Application.created_at.desc())
     elif sort == 'created_asc':
@@ -271,6 +561,51 @@ def export_applications():
         query = query.order_by(Application.id.asc())
     else:
         query = query.order_by(Application.created_at.desc())
+    filters['sort'] = sort
+
+    return query, filters
+
+
+@main.route('/export-applications')
+@auth_required(permission='client-service.applications.export')
+def export_applications():
+    """Экспорт заявок в Excel с учетом всех фильтров"""
+    # Базовый запрос с предзагрузкой связанных данных
+    query = Application.query.options(
+        joinedload(Application.client),
+        joinedload(Application.responsible_person),
+        joinedload(Application.creator),
+        joinedload(Application.defects)
+    )
+
+    # Фильтрация заявок в зависимости от разрешений
+    from .auth_utils import has_permission, get_current_user_id, get_or_create_local_user
+    
+    # Если нет разрешения на просмотр ВСЕХ заявок, фильтруем по другим разрешениям
+    if not has_permission('client-service.applications.view.all'):
+        current_gateway_user_id = get_current_user_id()
+        local_user = get_or_create_local_user(commit=True) if current_gateway_user_id else None
+        
+        if local_user:
+            filter_conditions = []
+            
+            if has_permission('client-service.applications.view.own'):
+                filter_conditions.append(Application.creator_id == local_user.id)
+            
+            if has_permission('client-service.applications.view.responsible'):
+                responsible_person = ResponsiblePerson.query.filter_by(gateway_user_id=current_gateway_user_id).first()
+                if responsible_person:
+                    filter_conditions.append(Application.responsible_person_id == responsible_person.id)
+            
+            if filter_conditions:
+                query = query.filter(or_(*filter_conditions))
+            else:
+                query = query.filter(Application.id == -1)
+        else:
+            query = query.filter(Application.id == -1)
+    
+    # Применяем все фильтры через общую функцию
+    query, filters = _apply_app_filters(query, request.args)
 
     # Получаем все заявки без пагинации для экспорта
     apps = query.all()
@@ -286,19 +621,30 @@ def export_applications():
     
     # Создаем заголовок с информацией о фильтрах
     filter_info = []
-    if status:
-        filter_info.append(f"Статус: {status}")
-    if app_type:
-        filter_info.append(f"Тип: {app_type}")
-    if date_from:
-        filter_info.append(f"С даты: {date_from}")
-    if date_to:
-        filter_info.append(f"По дату: {date_to}")
-    if search:
-        filter_info.append(f"Поиск: {search}")
-    if overdue == 'yes':
+    if filters.get('status'):
+        filter_info.append(f"Статус: {filters['status']}")
+    if filters.get('type'):
+        filter_info.append(f"Тип: {filters['type']}")
+    if filters.get('responsible_id'):
+        rp = ResponsiblePerson.query.get(filters['responsible_id'])
+        filter_info.append(f"Ответственный: {rp.full_name if rp else filters['responsible_id']}")
+    if filters.get('source'):
+        filter_info.append(f"Источник: {filters['source']}")
+    if filters.get('housing_complex'):
+        filter_info.append(f"ЖК: {filters['housing_complex']}")
+    if filters.get('house_number'):
+        filter_info.append(f"Дом: {filters['house_number']}")
+    if filters.get('app_id'):
+        filter_info.append(f"ID заявки: {filters['app_id']}")
+    if filters.get('date_from'):
+        filter_info.append(f"С даты: {filters['date_from']}")
+    if filters.get('date_to'):
+        filter_info.append(f"По дату: {filters['date_to']}")
+    if filters.get('search'):
+        filter_info.append(f"Поиск: {filters['search']}")
+    if filters.get('overdue') == 'yes':
         filter_info.append("Только просроченные")
-    elif overdue == 'no':
+    elif filters.get('overdue') == 'no':
         filter_info.append("Не просроченные")
     
     if filter_info:
@@ -406,8 +752,735 @@ def export_applications():
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
-@main.route('/client-service/applications')
-@login_required
+# ==================== ИМПОРТ ЗАЯВОК ====================
+
+# Обновляемые колонки (заголовок Excel → внутреннее имя)
+IMPORT_UPDATABLE = {
+    'Статус': 'status',
+    'Ответственный': 'responsible',
+    'Источник': 'source',
+    'Срок выполнения': 'due_date',
+    'Последний комментарий': 'log_comment',
+    'Комментарий к заявке': 'comment',
+}
+
+VALID_STATUSES = {'В работе', 'Выполнено', 'Частично выполнено', 'Закрыто', 'Отклонено'}
+VALID_STATUSES_LIST = ['В работе', 'Выполнено', 'Частично выполнено', 'Закрыто', 'Отклонено']
+MAX_IMPORT_FILE_SIZE = 20 * 1024 * 1024  # 20 МБ
+
+# Колонки шаблона импорта (совпадают с экспортом, чтобы файл экспорта
+# можно было использовать напрямую как файл импорта)
+IMPORT_TEMPLATE_HEADERS = [
+    "ID Заявки", "Дата создания", "Статус", "Тип заявки", "№ Договора",
+    "ФИО Клиента", "Телефон клиента", "ЖК", "Дом", "Подъезд", "Номер квартиры",
+    "Ответственный", "Email ответственного", "Создатель заявки", "Источник",
+    "Срок выполнения", "Дата завершения", "Просрочено", "Дата последнего изменения",
+    "Последний комментарий", "Комментарий к заявке", "Дефекты (Тип: Комментарий)"
+]
+
+# Индексы (1-based) колонок, которые влияют на импорт (редактируемые)
+IMPORT_EDITABLE_COLS = {1, 3, 4, 6, 7, 8, 9, 12, 15, 16, 20, 21}
+# Остальные колонки read-only: 2, 5, 10, 11, 13, 14, 17, 18, 19, 22
+
+
+def _create_nc_contact_and_deal(contact_name, contact_phone, client_comment=None):
+    """Создаёт NC-контакт и NC-договор. Возвращает (client, agreement_number).
+    Вызывается внутри транзакции — НЕ делает commit."""
+    min_contact_id = db.session.query(db.func.min(EstateDealsContacts.id)).scalar() or 0
+    new_client_id = min(min_contact_id, 0) - 1
+
+    new_client = EstateDealsContacts(
+        id=new_client_id,
+        contacts_buy_name=contact_name,
+        contacts_buy_phones=contact_phone,
+        client_comment=client_comment
+    )
+    db.session.add(new_client)
+    db.session.flush()
+
+    agreement_number = f"NC-{abs(new_client.id)}"
+    min_deal_id = db.session.query(db.func.min(EstateDeals.id)).scalar() or 0
+    new_deal_id = min(min_deal_id, 0) - 1
+
+    new_deal = EstateDeals(
+        id=new_deal_id,
+        contacts_buy_id=new_client.id,
+        agreement_number=agreement_number,
+        deal_status_name="Без договора",
+        agreement_date=datetime.now().date(),
+        deal_sum=0.0,
+        finances_income_reserved=0.0
+    )
+    db.session.add(new_deal)
+    db.session.flush()
+    return new_client, agreement_number
+
+
+@main.route('/applications/import-template', methods=['GET'])
+@auth_required(permission='client-service.applications.import')
+def import_template():
+    """Скачивание пустого Excel-шаблона импорта с dropdown-списками.
+    Структура колонок идентична экспортному файлу (22 колонки)."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'Импорт заявок'
+
+    # Лист справочника для источников данных dropdowns
+    ws_ref = wb.create_sheet('Справочник')
+    # Лист инструкции
+    ws_instr = wb.create_sheet('Инструкция')
+
+    # --- Собираем справочные данные ---
+    rp_names = sorted([rp.full_name for rp in ResponsiblePerson.query.all()])
+    app_type_names = sorted([at.name for at in ApplicationType.query.order_by(ApplicationType.name).all()])
+    sources_list = ['Звонок', 'Email', 'Личный визит', 'Сайт', 'Другое']
+    complexes = [row[0] for row in db.session.execute(
+        db.text('SELECT DISTINCT complex_name FROM estate_houses WHERE complex_name IS NOT NULL AND complex_name != "" ORDER BY complex_name')
+    ).fetchall()]
+    houses = [row[0] for row in db.session.execute(
+        db.text('SELECT DISTINCT name FROM estate_houses WHERE name IS NOT NULL AND name != "" ORDER BY name')
+    ).fetchall()]
+
+    # --- Заполняем лист справочника ---
+    ref_columns = {
+        'A': ('Статусы', VALID_STATUSES_LIST),
+        'B': ('Ответственные', rp_names),
+        'C': ('Типы заявок', app_type_names),
+        'D': ('Источники', sources_list),
+        'E': ('ЖК', complexes),
+        'F': ('Дома', houses),
+    }
+    for col_letter, (header, values) in ref_columns.items():
+        ws_ref[f'{col_letter}1'] = header
+        ws_ref[f'{col_letter}1'].font = Font(bold=True)
+        for i, val in enumerate(values, start=2):
+            ws_ref[f'{col_letter}{i}'] = val
+
+    # --- Заголовки основного листа (22 колонки = как экспорт) ---
+    white_fill = PatternFill(start_color='FFFFFF', end_color='FFFFFF', fill_type='solid')
+    gray_fill = PatternFill(start_color='E0E0E0', end_color='E0E0E0', fill_type='solid')
+    header_font = Font(bold=True)
+    for col_idx, header in enumerate(IMPORT_TEMPLATE_HEADERS, start=1):
+        cell = ws.cell(row=1, column=col_idx, value=header)
+        cell.font = header_font
+        cell.fill = white_fill if col_idx in IMPORT_EDITABLE_COLS else gray_fill
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+
+    # Ширина колонок (22 колонки)
+    col_widths = [12, 18, 22, 20, 16, 25, 18, 20, 15, 12, 16, 25, 25, 20, 16, 16, 18, 14, 20, 35, 35, 35]
+    for i, w in enumerate(col_widths, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    # --- Data Validation (dropdown-списки) — данные начинаются со строки 2 ---
+    max_data_rows = 1000
+
+    def add_ref_validation(ws_target, col_letter_target, col_letter_ref, count, col_idx):
+        if count < 1:
+            return
+        formula = f'Справочник!${col_letter_ref}$2:${col_letter_ref}${count + 1}'
+        dv = DataValidation(type='list', formula1=formula, allow_blank=True)
+        dv.error = 'Выберите значение из списка'
+        dv.errorTitle = 'Недопустимое значение'
+        dv.prompt = 'Выберите из списка'
+        dv.promptTitle = IMPORT_TEMPLATE_HEADERS[col_idx - 1]
+        cell_range = f'{col_letter_target}2:{col_letter_target}{max_data_rows}'
+        dv.add(cell_range)
+        ws_target.add_data_validation(dv)
+
+    # Статус (C=3) → Справочник!A
+    add_ref_validation(ws, 'C', 'A', len(VALID_STATUSES_LIST), 3)
+    # Тип заявки (D=4) → Справочник!C
+    add_ref_validation(ws, 'D', 'C', len(app_type_names), 4)
+    # ЖК (H=8) → Справочник!E
+    add_ref_validation(ws, 'H', 'E', len(complexes), 8)
+    # Дом (I=9) → Справочник!F
+    add_ref_validation(ws, 'I', 'F', len(houses), 9)
+    # Ответственный (L=12) → Справочник!B
+    add_ref_validation(ws, 'L', 'B', len(rp_names), 12)
+    # Источник (O=15) → Справочник!D
+    add_ref_validation(ws, 'O', 'D', len(sources_list), 15)
+
+    # --- Лист «Инструкция» ---
+    ws_instr.column_dimensions['A'].width = 30
+    ws_instr.column_dimensions['B'].width = 70
+
+    instr_rows = [
+        ('Инструкция по импорту заявок', ''),
+        ('', ''),
+        ('Режим работы', 'Описание'),
+        ('Пустой «ID Заявки»', 'Создание новой заявки'),
+        ('Заполненный «ID Заявки»', 'Обновление существующей заявки (изменяются только заполненные поля)'),
+        ('', ''),
+        ('Обязательные поля (новая заявка)', 'Описание'),
+        ('ФИО Клиента', 'ФИО клиента (контакт)'),
+        ('Телефон клиента', 'Номер телефона'),
+        ('Тип заявки', 'Выбрать из выпадающего списка'),
+        ('Ответственный', 'Выбрать из выпадающего списка'),
+        ('Комментарий к заявке', 'Описание проблемы / заявки'),
+        ('', ''),
+        ('Обновляемые поля', 'Описание'),
+        ('Статус', 'В работе / Выполнено / Частично выполнено / Закрыто / Отклонено'),
+        ('Ответственный', 'ФИО ответственного'),
+        ('Источник', 'Звонок / Email / Личный визит / Сайт / Другое'),
+        ('Срок выполнения', 'Дата в формате ДД.ММ.ГГГГ или ГГГГ-ММ-ДД'),
+        ('Последний комментарий', 'Добавляет запись в журнал заявки'),
+        ('Комментарий к заявке', 'Обновляет основной комментарий заявки'),
+        ('', ''),
+        ('Цветовая маркировка заголовков', ''),
+        ('Белый фон', 'Колонка влияет на импорт (редактируемая)'),
+        ('Серый фон', 'Колонка только для чтения (игнорируется при импорте)'),
+        ('', ''),
+        ('Примечания', ''),
+        ('', 'Можно использовать файл экспорта напрямую как файл для импорта'),
+        ('', 'Колонки с серым фоном (Дата создания, № Договора, Подъезд и т.д.) не влияют на результат импорта'),
+        ('', 'Для выбора значения нажмите на ячейку — появится выпадающий список'),
+        ('', 'Если статус не указан при создании, устанавливается «В работе»'),
+        ('', 'Если источник не указан при создании, устанавливается «Импорт»'),
+    ]
+
+    title_font = Font(bold=True, size=14)
+    section_font = Font(bold=True, size=11)
+    for row_idx, (col_a, col_b) in enumerate(instr_rows, start=1):
+        cell_a = ws_instr.cell(row=row_idx, column=1, value=col_a)
+        cell_b = ws_instr.cell(row=row_idx, column=2, value=col_b)
+        if row_idx == 1:
+            cell_a.font = title_font
+            ws_instr.merge_cells('A1:B1')
+        elif col_a and col_b == 'Описание':
+            cell_a.font = section_font
+            cell_b.font = section_font
+        elif col_a and col_a not in ('', 'Примечания', 'Цветовая маркировка заголовков'):
+            cell_a.font = Font(bold=True)
+        elif col_a in ('Примечания', 'Цветовая маркировка заголовков'):
+            cell_a.font = section_font
+    # Цветные ячейки-примеры
+    white_example_row = [r for r in range(1, len(instr_rows) + 1) if instr_rows[r-1][0] == 'Белый фон']
+    gray_example_row = [r for r in range(1, len(instr_rows) + 1) if instr_rows[r-1][0] == 'Серый фон']
+    if white_example_row:
+        ws_instr.cell(row=white_example_row[0], column=1).fill = white_fill
+    if gray_example_row:
+        ws_instr.cell(row=gray_example_row[0], column=1).fill = gray_fill
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    wb.close()
+
+    return send_file(buffer, as_attachment=True,
+                     download_name='Шаблон_импорта_заявок.xlsx',
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+
+def _normalize_str(val):
+    """Нормализует строку из Excel: убирает _x000D_, \r, лишние пробелы.
+    openpyxl при чтении файлов, сохранённых из Excel (Windows),
+    может оставлять escape-последовательности _x000D_ (\r) в тексте."""
+    if val is None:
+        return ''
+    s = str(val)
+    # openpyxl XML escape для CR
+    s = s.replace('_x000D_', '')
+    # Windows CRLF → LF
+    s = s.replace('\r\n', '\n')
+    # Оставшиеся одиночные CR
+    s = s.replace('\r', '')
+    return s.strip()
+
+
+def _parse_import_file(filepath):
+    """Парсит загруженный Excel-файл и возвращает список изменений + ошибки."""
+    from .auth_utils import has_permission, get_current_user_id
+
+    wb = load_workbook(filepath, read_only=True, data_only=True)
+    ws = wb.active
+
+    # Ищем строку заголовков (содержащую 'ID Заявки')
+    header_row = None
+    headers = {}
+    for row_idx, row in enumerate(ws.iter_rows(min_row=1, max_row=10, values_only=False), start=1):
+        for cell in row:
+            if cell.value and str(cell.value).strip() == 'ID Заявки':
+                header_row = row_idx
+                break
+        if header_row:
+            for cell in row:
+                if cell.value:
+                    headers[str(cell.value).strip()] = cell.column - 1  # 0-indexed
+            break
+
+    if header_row is None:
+        wb.close()
+        return [], [{'row': 0, 'error': 'Не найден заголовок "ID Заявки". Убедитесь, что файл соответствует формату экспорта.'}]
+
+    id_col = headers.get('ID Заявки')
+    if id_col is None:
+        wb.close()
+        return [], [{'row': 0, 'error': 'Колонка "ID Заявки" не найдена в заголовках.'}]
+
+    # Определяем индексы обновляемых колонок
+    col_map = {}  # internal_name → column_index
+    for excel_name, internal_name in IMPORT_UPDATABLE.items():
+        if excel_name in headers:
+            col_map[internal_name] = headers[excel_name]
+
+    # Загрузим справочники
+    responsible_persons = {rp.full_name.strip().lower(): rp for rp in ResponsiblePerson.query.all()}
+    responsible_by_id = {rp.id: rp for rp in ResponsiblePerson.query.all()}
+
+    # Проверяем права
+    has_admin = has_permission('client-service.applications.view.all')
+    current_gw_id = get_current_user_id()
+    current_responsible = None
+    if current_gw_id:
+        current_responsible = ResponsiblePerson.query.filter_by(gateway_user_id=current_gw_id).first()
+
+    changes = []      # обновления существующих заявок
+    new_apps = []      # создание новых заявок
+    errors = []
+    seen_ids = set()
+
+    # Колонки для создания новых заявок
+    name_col = headers.get('ФИО Клиента')
+    phone_col = headers.get('Телефон клиента')
+    type_col = headers.get('Тип заявки')
+    hc_col = headers.get('ЖК')
+    house_col = headers.get('Дом')
+
+    for row_idx, row in enumerate(ws.iter_rows(min_row=header_row + 1, values_only=True), start=header_row + 1):
+        if not row:
+            continue
+        # Проверяем, есть ли хоть одно непустое значение в строке
+        if all(c is None or str(c).strip() == '' for c in row):
+            continue
+
+        raw_id = row[id_col] if len(row) > id_col else None
+        is_new = raw_id is None or str(raw_id).strip() == ''
+
+        if is_new:
+            # ===== СОЗДАНИЕ НОВОЙ ЗАЯВКИ =====
+            def _get(col_idx):
+                if col_idx is not None and len(row) > col_idx and row[col_idx] is not None:
+                    return _normalize_str(row[col_idx])
+                return ''
+
+            contact_name = _get(name_col)
+            contact_phone = _get(phone_col)
+            app_type_name = _get(type_col)
+            new_status = _get(col_map.get('status', -1)) if 'status' in col_map else ''
+            responsible_name = _get(col_map.get('responsible', -1)) if 'responsible' in col_map else ''
+            source_val = _get(col_map.get('source', -1)) if 'source' in col_map else ''
+            comment_val = _get(col_map.get('comment', -1)) if 'comment' in col_map else ''
+            hc_val = _get(hc_col)
+            house_val = _get(house_col)
+
+            # Обязательные поля
+            missing = []
+            if not contact_name: missing.append('ФИО Клиента')
+            if not contact_phone: missing.append('Телефон клиента')
+            if not app_type_name: missing.append('Тип заявки')
+            if not responsible_name: missing.append('Ответственный')
+            if not comment_val: missing.append('Комментарий к заявке')
+            if missing:
+                errors.append({'row': row_idx, 'error': f'Новая заявка: не заполнены обязательные поля: {", ".join(missing)}'})
+                continue
+
+            # Валидация статуса
+            if new_status and new_status not in VALID_STATUSES:
+                errors.append({'row': row_idx, 'error': f'Новая заявка: невалидный статус "{new_status}"'})
+                continue
+
+            # Поиск ответственного
+            matched_rp = responsible_persons.get(responsible_name.lower())
+            if not matched_rp:
+                for name, rp in responsible_persons.items():
+                    if responsible_name.lower() in name or name in responsible_name.lower():
+                        matched_rp = rp
+                        break
+            if not matched_rp:
+                errors.append({'row': row_idx, 'error': f'Новая заявка: ответственный "{responsible_name}" не найден'})
+                continue
+
+            # Срок выполнения
+            due_date_val = None
+            if 'due_date' in col_map:
+                raw_due = row[col_map['due_date']] if len(row) > col_map['due_date'] else None
+                if raw_due and str(raw_due).strip() not in ('', 'N/A', 'None'):
+                    if isinstance(raw_due, datetime):
+                        due_date_val = raw_due.isoformat()
+                    else:
+                        for fmt in ('%Y-%m-%d', '%d.%m.%Y', '%d/%m/%Y'):
+                            try:
+                                due_date_val = datetime.strptime(str(raw_due).strip(), fmt).isoformat()
+                                break
+                            except ValueError:
+                                pass
+
+            new_apps.append({
+                'row': row_idx,
+                'contact_name': contact_name,
+                'contact_phone': contact_phone,
+                'application_type': app_type_name,
+                'status': new_status or 'В работе',
+                'responsible_name': matched_rp.full_name,
+                'responsible_id': matched_rp.id,
+                'source': source_val or 'Импорт',
+                'comment': comment_val,
+                'housing_complex': hc_val,
+                'house_number': house_val,
+                'due_date': due_date_val,
+            })
+            continue
+
+        # ===== ОБНОВЛЕНИЕ СУЩЕСТВУЮЩЕЙ ЗАЯВКИ =====
+        try:
+            app_id = int(raw_id)
+        except (ValueError, TypeError):
+            errors.append({'row': row_idx, 'error': f'Невалидный ID заявки: "{raw_id}"'})
+            continue
+
+        if app_id in seen_ids:
+            errors.append({'row': row_idx, 'error': f'Дубликат ID #{app_id} в файле'})
+            continue
+        seen_ids.add(app_id)
+
+        app = Application.query.get(app_id)
+        if not app:
+            errors.append({'row': row_idx, 'error': f'Заявка #{app_id} не найдена в базе'})
+            continue
+
+        # Проверка прав на эту заявку
+        if not has_admin:
+            is_responsible = current_responsible and current_responsible.id == app.responsible_person_id
+            is_nc = (app.agreement_number and
+                     (app.agreement_number.startswith('NC-') or app.agreement_number == 'SYSTEM-001'))
+            if not (is_responsible or is_nc):
+                errors.append({'row': row_idx, 'error': f'Заявка #{app_id}: нет прав на изменение'})
+                continue
+
+        row_changes = []
+
+        # --- Статус ---
+        if 'status' in col_map:
+            new_val = _normalize_str(row[col_map['status']])
+            if new_val and new_val != _normalize_str(app.status):
+                if new_val not in VALID_STATUSES:
+                    errors.append({'row': row_idx, 'error': f'Заявка #{app_id}: невалидный статус "{new_val}"'})
+                    continue
+                row_changes.append({
+                    'field': 'Статус', 'old': app.status or '', 'new': new_val,
+                    'db_field': 'status'
+                })
+
+        # --- Ответственный ---
+        if 'responsible' in col_map:
+            new_val = _normalize_str(row[col_map['responsible']])
+            current_name = _normalize_str(app.responsible_person.full_name) if app.responsible_person else 'Не назначен'
+            if new_val and new_val != current_name:
+                # Матчинг по имени (case-insensitive)
+                matched = responsible_persons.get(new_val.lower())
+                if not matched:
+                    # Частичный поиск
+                    for name, rp in responsible_persons.items():
+                        if new_val.lower() in name or name in new_val.lower():
+                            matched = rp
+                            break
+                if not matched and new_val.lower() != 'не назначен':
+                    errors.append({'row': row_idx, 'error': f'Заявка #{app_id}: ответственный "{new_val}" не найден'})
+                    continue
+                new_rp_id = matched.id if matched else None
+                if new_rp_id != app.responsible_person_id:
+                    row_changes.append({
+                        'field': 'Ответственный', 'old': current_name,
+                        'new': matched.full_name if matched else 'Не назначен',
+                        'db_field': 'responsible_person_id', 'db_value': new_rp_id
+                    })
+
+        # --- Источник ---
+        if 'source' in col_map:
+            new_val = _normalize_str(row[col_map['source']])
+            current_val = _normalize_str(app.source) or 'Не указан'
+            if new_val and new_val != current_val and new_val != 'Не указан':
+                row_changes.append({
+                    'field': 'Источник', 'old': current_val, 'new': new_val,
+                    'db_field': 'source'
+                })
+
+        # --- Срок выполнения ---
+        if 'due_date' in col_map:
+            raw_due = row[col_map['due_date']]
+            new_due = None
+            if raw_due and str(raw_due).strip() not in ('', 'N/A', 'None'):
+                if isinstance(raw_due, datetime):
+                    new_due = raw_due
+                else:
+                    for fmt in ('%Y-%m-%d', '%d.%m.%Y', '%d/%m/%Y'):
+                        try:
+                            new_due = datetime.strptime(str(raw_due).strip(), fmt)
+                            break
+                        except ValueError:
+                            pass
+                    if new_due is None:
+                        errors.append({'row': row_idx, 'error': f'Заявка #{app_id}: невалидная дата дедлайна "{raw_due}"'})
+                        continue
+
+            current_due = app.due_date
+            # Сравниваем только дату (без времени), т.к. Excel всегда возвращает 00:00:00
+            new_due_date = new_due.date() if isinstance(new_due, datetime) else new_due
+            current_due_date = current_due.date() if isinstance(current_due, datetime) else current_due
+            if new_due and (not current_due or new_due_date != current_due_date):
+                row_changes.append({
+                    'field': 'Срок выполнения',
+                    'old': current_due.strftime('%Y-%m-%d') if current_due else 'N/A',
+                    'new': new_due.strftime('%Y-%m-%d'),
+                    'db_field': 'due_date', 'db_value': new_due.isoformat()
+                })
+
+        # --- Комментарий к заявке ---
+        if 'comment' in col_map:
+            new_val = _normalize_str(row[col_map['comment']])
+            current_val = _normalize_str(app.comment)
+            if new_val and new_val != current_val:
+                row_changes.append({
+                    'field': 'Комментарий к заявке',
+                    'old': current_val[:80] + ('...' if len(current_val) > 80 else ''),
+                    'new': new_val[:80] + ('...' if len(new_val) > 80 else ''),
+                    'db_field': 'comment', 'db_value': new_val
+                })
+
+        # --- Последний комментарий (→ ApplicationLog) ---
+        if 'log_comment' in col_map:
+            new_val = _normalize_str(row[col_map['log_comment']])
+            last_log = ApplicationLog.query.filter_by(application_id=app_id) \
+                .order_by(ApplicationLog.timestamp.desc()).first()
+            current_val = _normalize_str(last_log.comment) if last_log else ''
+            if new_val and new_val != current_val and new_val != 'N/A':
+                row_changes.append({
+                    'field': 'Новый комментарий (лог)',
+                    'old': (current_val[:80] + '...') if current_val and len(current_val) > 80 else (current_val or '—'),
+                    'new': new_val[:80] + ('...' if len(new_val) > 80 else ''),
+                    'db_field': 'log_comment', 'db_value': new_val
+                })
+
+        if row_changes:
+            changes.append({'app_id': app_id, 'row': row_idx, 'fields': row_changes})
+
+    wb.close()
+    return changes, new_apps, errors
+
+
+@main.route('/applications/import', methods=['POST'])
+@auth_required(permission='client-service.applications.import')
+def import_applications_preview():
+    """Шаг 1: загрузка Excel-файла и генерация превью изменений."""
+    if 'file' not in request.files:
+        return jsonify({'success': False, 'error': 'Файл не выбран'}), 400
+
+    file = request.files['file']
+    if not file.filename or not file.filename.endswith('.xlsx'):
+        return jsonify({'success': False, 'error': 'Допустимый формат: .xlsx'}), 400
+
+    # Проверяем размер
+    file.seek(0, 2)
+    size = file.tell()
+    file.seek(0)
+    if size > MAX_IMPORT_FILE_SIZE:
+        return jsonify({'success': False, 'error': f'Файл слишком большой ({size // (1024*1024)} МБ). Максимум 20 МБ.'}), 400
+
+    # Сохраняем во временный файл
+    import_id = str(uuid.uuid4())
+    tmp_dir = os.path.join(tempfile.gettempdir(), 'crm_imports')
+    os.makedirs(tmp_dir, exist_ok=True)
+    tmp_path = os.path.join(tmp_dir, f'{import_id}.xlsx')
+    file.save(tmp_path)
+
+    try:
+        changes, new_apps, errors = _parse_import_file(tmp_path)
+    except Exception as e:
+        os.remove(tmp_path)
+        return jsonify({'success': False, 'error': f'Ошибка чтения файла: {str(e)}'}), 400
+
+    # Считаем сводку
+    total_updates = len(changes)
+    total_fields = sum(len(c['fields']) for c in changes)
+    total_new = len(new_apps)
+
+    return jsonify({
+        'success': True,
+        'import_id': import_id,
+        'summary': {
+            'total_applications': total_updates,
+            'total_changes': total_fields,
+            'total_new': total_new,
+            'total_errors': len(errors)
+        },
+        'changes': changes,
+        'new_apps': new_apps,
+        'errors': errors
+    })
+
+
+@main.route('/applications/import/confirm', methods=['POST'])
+@auth_required(permission='client-service.applications.import')
+def import_applications_confirm():
+    """Шаг 2: применение изменений из загруженного файла."""
+    from .auth_utils import get_or_create_local_user
+
+    data = request.get_json()
+    if not data or 'import_id' not in data:
+        return jsonify({'success': False, 'error': 'import_id не указан'}), 400
+
+    import_id = data['import_id']
+    tmp_dir = os.path.join(tempfile.gettempdir(), 'crm_imports')
+    tmp_path = os.path.join(tmp_dir, f'{import_id}.xlsx')
+
+    if not os.path.exists(tmp_path):
+        return jsonify({'success': False, 'error': 'Файл импорта не найден или истёк. Загрузите заново.'}), 404
+
+    try:
+        changes, new_apps, errors = _parse_import_file(tmp_path)
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'Ошибка повторного чтения файла: {str(e)}'}), 400
+
+    if not changes and not new_apps:
+        os.remove(tmp_path)
+        return jsonify({'success': True, 'applied': 0, 'message': 'Нет изменений для применения.'})
+
+    local_user = get_or_create_local_user()
+    author_id = local_user.id if local_user else None
+
+    applied_count = 0
+    applied_apps = 0
+    created_count = 0
+
+    try:
+        for change_group in changes:
+            app_id = change_group['app_id']
+            app = Application.query.get(app_id)
+            if not app:
+                continue
+
+            log_parts = []
+            new_log_comment = None
+
+            for field_change in change_group['fields']:
+                db_field = field_change['db_field']
+                new_value = field_change.get('db_value', field_change['new'])
+
+                if db_field == 'status':
+                    old_status = app.status
+                    app.status = new_value
+                    app.last_status_change = datetime.now()
+                    if new_value in ('Выполнено', 'Закрыто', 'Отклонено'):
+                        if not app.completed_at:
+                            app.completed_at = datetime.now()
+                    elif old_status in ('Выполнено', 'Закрыто', 'Отклонено'):
+                        app.completed_at = None
+                    log_parts.append(f'Статус: {old_status} → {new_value}')
+
+                elif db_field == 'responsible_person_id':
+                    old_name = app.responsible_person.full_name if app.responsible_person else 'Не назначен'
+                    app.responsible_person_id = new_value
+                    log_parts.append(f'Ответственный: {old_name} → {field_change["new"]}')
+
+                elif db_field == 'source':
+                    old_val = app.source or 'Не указан'
+                    app.source = new_value
+                    log_parts.append(f'Источник: {old_val} → {new_value}')
+
+                elif db_field == 'due_date':
+                    old_due = app.due_date.strftime('%Y-%m-%d') if app.due_date else 'N/A'
+                    app.due_date = datetime.fromisoformat(new_value)
+                    log_parts.append(f'Срок: {old_due} → {app.due_date.strftime("%Y-%m-%d")}')
+
+                elif db_field == 'comment':
+                    app.comment = new_value
+                    log_parts.append('Комментарий к заявке обновлён')
+
+                elif db_field == 'log_comment':
+                    new_log_comment = new_value
+
+                applied_count += 1
+
+            # Создаём запись в логе
+            if log_parts or new_log_comment:
+                action = 'Массовый импорт: ' + '; '.join(log_parts) if log_parts else 'Комментарий через импорт'
+                comment = new_log_comment or '; '.join(log_parts)
+                log_entry = ApplicationLog(
+                    application_id=app_id,
+                    action=action,
+                    comment=comment,
+                    author_id=author_id
+                )
+                db.session.add(log_entry)
+
+            applied_apps += 1
+
+        # ===== СОЗДАНИЕ НОВЫХ ЗАЯВОК =====
+        for new_app_data in new_apps:
+            try:
+                new_client, agreement_number = _create_nc_contact_and_deal(
+                    new_app_data['contact_name'],
+                    new_app_data['contact_phone']
+                )
+
+                # Срок выполнения: из файла или из типа заявки
+                due_date = None
+                if new_app_data.get('due_date'):
+                    due_date = datetime.fromisoformat(new_app_data['due_date'])
+                else:
+                    app_type = ApplicationType.query.filter_by(name=new_app_data['application_type']).first()
+                    if app_type and app_type.execution_days:
+                        from datetime import timedelta
+                        due_date = datetime.now() + timedelta(days=app_type.execution_days)
+
+                new_app = Application(
+                    client_id=new_client.id,
+                    agreement_number=agreement_number,
+                    application_type=new_app_data['application_type'],
+                    comment=new_app_data['comment'],
+                    status=new_app_data['status'],
+                    responsible_person_id=new_app_data['responsible_id'],
+                    creator_id=author_id,
+                    due_date=due_date,
+                    source=new_app_data['source'],
+                    housing_complex=new_app_data['housing_complex'] or None,
+                    house_number=new_app_data['house_number'] or None,
+                )
+                db.session.add(new_app)
+                db.session.flush()
+
+                db.session.add(ApplicationLog(
+                    application=new_app,
+                    action='Заявка создана (импорт)',
+                    comment=f"Клиент: {new_app_data['contact_name']}. Ответственный: {new_app_data['responsible_name']}",
+                    author_id=author_id
+                ))
+                created_count += 1
+            except Exception as e:
+                errors.append({'row': new_app_data['row'], 'error': f'Ошибка создания: {str(e)}'})
+
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': f'Ошибка применения: {str(e)}'}), 500
+    finally:
+        # Удаляем временный файл
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+
+    return jsonify({
+        'success': True,
+        'applied_apps': applied_apps,
+        'applied_changes': applied_count,
+        'created_apps': created_count,
+        'message': f'Обновлено {applied_apps} заявок ({applied_count} полей). Создано {created_count} новых заявок.'
+    })
+
+
+@main.route('/applications')
+@auth_required(any_of=['client-service.applications.view.all', 'client-service.applications.view.own', 'client-service.applications.view.responsible'])
 def applications():
     page = request.args.get('page', 1, type=int)
 
@@ -418,92 +1491,34 @@ def applications():
         joinedload(Application.creator)
     )
 
-    # Фильтрация заявок в зависимости от роли
-    if not current_user.has_role('Админ'):
-        # Пользователь видит заявки, которые он создал
-        created_by_me = Application.creator_id == current_user.id
-
-        # Пользователь видит заявки, где он - ответственный
-        # (через связь User -> ResponsiblePerson)
-        responsible_for = Application.responsible_person_id == (
-            current_user.responsible_person_profile.id if current_user.responsible_person_profile else -1
-        )
-
-        query = query.filter(or_(created_by_me, responsible_for))
+    # Фильтрация заявок в зависимости от разрешений
+    from .auth_utils import has_permission, get_current_user_id, get_or_create_local_user
     
-    # Применяем фильтры
-    # Фильтр по статусу
-    status = request.args.get('status', '')
-    if status:
-        query = query.filter(Application.status == status)
+    # Если нет разрешения на просмотр ВСЕХ заявок, фильтруем по другим разрешениям
+    if not has_permission('client-service.applications.view.all'):
+        current_gateway_user_id = get_current_user_id()
+        local_user = get_or_create_local_user(commit=True) if current_gateway_user_id else None
+        
+        if local_user:
+            filter_conditions = []
+            
+            if has_permission('client-service.applications.view.own'):
+                filter_conditions.append(Application.creator_id == local_user.id)
+            
+            if has_permission('client-service.applications.view.responsible'):
+                responsible_person = ResponsiblePerson.query.filter_by(gateway_user_id=current_gateway_user_id).first()
+                if responsible_person:
+                    filter_conditions.append(Application.responsible_person_id == responsible_person.id)
+            
+            if filter_conditions:
+                query = query.filter(or_(*filter_conditions))
+            else:
+                query = query.filter(Application.id == -1)
+        else:
+            query = query.filter(Application.id == -1)
     
-    # Фильтр по типу заявки
-    app_type = request.args.get('type', '')
-    if app_type:
-        query = query.filter(Application.application_type == app_type)
-    
-    # Фильтр по датам создания
-    date_from = request.args.get('date_from', '')
-    if date_from:
-        try:
-            date_from_obj = datetime.strptime(date_from, '%Y-%m-%d')
-            query = query.filter(Application.created_at >= date_from_obj)
-        except ValueError:
-            pass
-    
-    date_to = request.args.get('date_to', '')
-    if date_to:
-        try:
-            date_to_obj = datetime.strptime(date_to, '%Y-%m-%d').replace(hour=23, minute=59, second=59)
-            query = query.filter(Application.created_at <= date_to_obj)
-        except ValueError:
-            pass
-    
-    # Поиск по клиенту или номеру договора
-    search = request.args.get('search', '')
-    if search:
-        query = query.join(Application.client).filter(
-            or_(
-                EstateDealsContacts.contacts_buy_name.contains(search),
-                Application.agreement_number.contains(search)
-            )
-        )
-    
-    # Фильтр по просроченным
-    overdue = request.args.get('overdue', '')
-    if overdue == 'yes':
-        # Только просроченные
-        query = query.filter(
-            Application.due_date.isnot(None),
-            Application.due_date < datetime.now(),
-            Application.completed_at.is_(None)
-        )
-    elif overdue == 'no':
-        # Не просроченные
-        query = query.filter(
-            or_(
-                Application.due_date.is_(None),
-                Application.due_date >= datetime.now(),
-                Application.completed_at.isnot(None)
-            )
-        )
-    
-    # Сортировка
-    sort = request.args.get('sort', 'created_desc')
-    if sort == 'created_desc':
-        query = query.order_by(Application.created_at.desc())
-    elif sort == 'created_asc':
-        query = query.order_by(Application.created_at.asc())
-    elif sort == 'due_desc':
-        query = query.order_by(Application.due_date.desc().nullslast())
-    elif sort == 'due_asc':
-        query = query.order_by(Application.due_date.asc().nullsfirst())
-    elif sort == 'id_desc':
-        query = query.order_by(Application.id.desc())
-    elif sort == 'id_asc':
-        query = query.order_by(Application.id.asc())
-    else:
-        query = query.order_by(Application.created_at.desc())
+    # Применяем все фильтры через общую функцию
+    query, filters = _apply_app_filters(query, request.args)
 
     # Пагинация
     apps_paginated = query.paginate(page=page, per_page=20)
@@ -512,13 +1527,32 @@ def applications():
     application_types = db.session.query(Application.application_type).distinct().order_by(Application.application_type).all()
     application_types = [t[0] for t in application_types if t[0]]
 
+    # Данные для фильтров
+    responsible_persons = ResponsiblePerson.query.order_by(ResponsiblePerson.full_name).all()
+    app_sources = ['Звонок', 'Email', 'Личный визит', 'Сайт', 'Другое']
+    app_statuses = ['В работе', 'Выполнено', 'Частично выполнено', 'Закрыто', 'Отклонено']
+
+    # Собираем активные фильтры для пагинации
+    filter_keys = ['status', 'type', 'date_from', 'date_to', 'search', 'overdue',
+                   'sort', 'responsible_id', 'source', 'housing_complex', 'house_number', 'app_id']
+    filter_params = {k: request.args.get(k, '') for k in filter_keys if request.args.get(k, '').strip()}
+
     return render_template('applications.html', 
                          applications=apps_paginated,
-                         application_types=application_types)
+                         application_types=application_types,
+                         responsible_persons=responsible_persons,
+                         app_sources=app_sources,
+                         app_statuses=app_statuses,
+                         filter_params=filter_params)
 
-@main.route('/client-service/client/<int:client_id>/application/create', methods=['POST'])
-@login_required
+@main.route('/client/<signed_int:client_id>/application/create', methods=['POST'])
+@auth_required(permission='client-service.applications.create')
 def create_application(client_id):
+    from .auth_utils import get_or_create_local_user
+    
+    local_user = get_or_create_local_user()
+    creator_local_id = local_user.id if local_user else None
+    
     contact = EstateDealsContacts.query.get_or_404(client_id)
     form_data = request.form
     application_type_name = form_data.get('application_type')
@@ -549,7 +1583,7 @@ def create_application(client_id):
     new_app = Application(client_id=client_id, agreement_number=agreement_number,
                           application_type=application_type_name,
                           comment=comment, responsible_person_id=responsible_person_id,
-                          creator_id=current_user.id, due_date=due_date, source=source)
+                          creator_id=creator_local_id, due_date=due_date, source=source)
     db.session.add(new_app)
 
     defects_data = {}
@@ -574,7 +1608,7 @@ def create_application(client_id):
 
     db.session.add(ApplicationLog(application=new_app, action="Заявка создана",
                                   comment=f"Назначен ответственный: {ResponsiblePerson.query.get(responsible_person_id).full_name}",
-                                  author_id=current_user.id))
+                                  author_id=creator_local_id))
 
     try:
         db.session.commit()
@@ -601,12 +1635,18 @@ def get_or_create_system_client():
     
     if not system_client:
         print("INFO: Системный клиент не найден. Создаем автоматически...")
+        
+        # Генерируем отрицательный ID, чтобы не конфликтовать с MySQL ID
+        min_contact_id = db.session.query(db.func.min(EstateDealsContacts.id)).scalar() or 0
+        new_client_id = min(min_contact_id, 0) - 1
+        
         system_client = EstateDealsContacts(
+            id=new_client_id,
             contacts_buy_name="СИСТЕМНЫЙ КЛИЕНТ (для заявок без договора)",
             contacts_buy_phones="000-00-00"
         )
         db.session.add(system_client)
-        db.session.flush()  # Чтобы получить ID
+        db.session.flush()
         print(f"INFO: Создан системный клиент с ID: {system_client.id}")
         
         # Проверяем и создаем системный договор
@@ -617,7 +1657,11 @@ def get_or_create_system_client():
         
         if not system_deal:
             from datetime import date
+            min_deal_id = db.session.query(db.func.min(EstateDeals.id)).scalar() or 0
+            new_deal_id = min(min_deal_id, 0) - 1
+            
             system_deal = EstateDeals(
+                id=new_deal_id,
                 agreement_number="SYSTEM-001",
                 contacts_buy_id=system_client.id,
                 deal_status_name="Системный",
@@ -633,19 +1677,17 @@ def get_or_create_system_client():
     return system_client
 
 
-@main.route('/client-service/application/create-general', methods=['POST'])
-@login_required
+@main.route('/application/create-general', methods=['POST'])
+@auth_required(permission='client-service.applications.create')
 def create_general_application():
-    """Создание заявки без привязки к клиенту (через системного клиента)"""
-    form_data = request.form
+    """Создание заявки без договора - создает нового клиента"""
+    from .auth_utils import get_or_create_local_user
     
-    # Получаем или создаем системного клиента автоматически
-    try:
-        system_client = get_or_create_system_client()
-    except Exception as e:
-        print(f"ERROR: Не удалось получить/создать системного клиента: {e}")
-        flash(f'Произошла ошибка при работе с системным клиентом: {e}', 'danger')
-        return redirect(url_for('main.index'))
+    local_user = get_or_create_local_user()
+    creator_local_id = local_user.id if local_user else None
+
+    
+    form_data = request.form
     
     # Получаем данные из формы
     application_type_name = form_data.get('application_type')
@@ -653,6 +1695,7 @@ def create_general_application():
     responsible_person_id = form_data.get('responsible_person_id')
     contact_name = form_data.get('contact_name', '').strip()
     contact_phone = form_data.get('contact_phone', '').strip()
+    client_comment = form_data.get('client_comment', '').strip()
     
     # Получаем источник заявки
     source = form_data.get('source', 'Звонок')
@@ -660,23 +1703,28 @@ def create_general_application():
         custom_source = form_data.get('custom_source', '').strip()
         if custom_source:
             source = custom_source
+    
+    # Получаем данные о ЖК и номере дома
+    housing_complex = form_data.get('housing_complex', '').strip()
+    house_number = form_data.get('house_number', '').strip()
 
     # Проверяем обязательные поля
-    if not all([application_type_name, comment, responsible_person_id]):
-        flash('Тип заявки, комментарий и ответственный являются обязательными полями.', 'danger')
+    if not all([application_type_name, comment, responsible_person_id, contact_name, contact_phone]):
+        flash('Все поля (ФИО клиента, телефон, тип заявки, комментарий и ответственный) являются обязательными.', 'danger')
         return redirect(url_for('main.index'))
 
-    # Добавляем информацию о контакте в комментарий, если она указана
-    enhanced_comment = comment
-    if contact_name or contact_phone:
-        enhanced_comment = f"Контактные данные: "
-        if contact_name:
-            enhanced_comment += f"ФИО: {contact_name}"
-        if contact_phone:
-            if contact_name:
-                enhanced_comment += ", "
-            enhanced_comment += f"Телефон: {contact_phone}"
-        enhanced_comment += f"\n\n{comment}"
+    # Создаем нового клиента для заявки без договора
+    try:
+        new_client, agreement_number = _create_nc_contact_and_deal(
+            contact_name, contact_phone,
+            client_comment=client_comment if client_comment else None
+        )
+        print(f"INFO: Создан новый клиент (без договора): ID={new_client.id}, ФИО={contact_name}")
+    except Exception as e:
+        db.session.rollback()
+        print(f"ERROR: Не удалось создать клиента/договор: {e}")
+        flash(f'Произошла ошибка при создании клиента: {e}', 'danger')
+        return redirect(url_for('main.index'))
 
     # Получаем тип заявки для определения срока выполнения
     app_type = ApplicationType.query.filter_by(name=application_type_name).first()
@@ -687,18 +1735,21 @@ def create_general_application():
         from datetime import timedelta
         due_date = datetime.now() + timedelta(days=app_type.execution_days)
 
-    # Создаем заявку с системным клиентом и договором
+    # Создаем заявку с новым клиентом и договором
     new_app = Application(
-        client_id=system_client.id, 
-        agreement_number="SYSTEM-001",  # Системный договор
+        client_id=new_client.id, 
+        agreement_number=agreement_number,
         application_type=application_type_name,
-        comment=enhanced_comment, 
+        comment=comment, 
         responsible_person_id=responsible_person_id,
-        creator_id=current_user.id, 
+        creator_id=creator_local_id, 
         due_date=due_date, 
-        source=source
+        source=source,
+        housing_complex=housing_complex if housing_complex else None,
+        house_number=house_number if house_number else None
     )
     db.session.add(new_app)
+    db.session.flush()  # Получаем ID заявки
 
     # Обработка дефектов
     defects_data = {}
@@ -724,9 +1775,9 @@ def create_general_application():
     # Добавляем лог
     db.session.add(ApplicationLog(
         application=new_app, 
-        action="Заявка создана (без привязки к клиенту)",
-        comment=f"Назначен ответственный: {ResponsiblePerson.query.get(responsible_person_id).full_name}",
-        author_id=current_user.id
+        action="Заявка создана (без договора)",
+        comment=f"Создан новый клиент: {contact_name}. Назначен ответственный: {ResponsiblePerson.query.get(responsible_person_id).full_name}",
+        author_id=creator_local_id
     ))
 
     try:
@@ -734,18 +1785,35 @@ def create_general_application():
         app_instance = current_app._get_current_object()
         thr = Thread(target=send_email_async, args=[app_instance, new_app.id])
         thr.start()
-        flash(f'Заявка №{new_app.id} успешно создана! Уведомление ответственному лицу отправляется.', 'success')
+        flash(f'Заявка №{new_app.id} успешно создана для нового клиента "{contact_name}"! Уведомление ответственному лицу отправляется.', 'success')
 
     except Exception as e:
         db.session.rollback()
         flash(f'Произошла ошибка при сохранении заявки в базу данных: {e}', 'danger')
 
-    return redirect(url_for('main.applications'))
+    return redirect(url_for('main.client_card', client_id=new_client.id))
 
 
-@main.route('/client-service/responsible')
-@login_required
-@permission_required('Админ')
+@main.route('/client-service/client/<signed_int:client_id>/update_comment', methods=['POST'])
+@auth_required(permission='client-service.admin.users')
+def update_client_comment(client_id):
+    """Обновление комментария клиента (только для админа)"""
+    contact = EstateDealsContacts.query.get_or_404(client_id)
+    new_comment = request.form.get('client_comment', '').strip()
+    
+    try:
+        contact.client_comment = new_comment if new_comment else None
+        db.session.commit()
+        flash('Комментарий клиента успешно обновлён.', 'success')
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Ошибка при обновлении комментария: {e}', 'danger')
+    
+    return redirect(url_for('main.client_card', client_id=client_id))
+
+
+@main.route('/responsible')
+@auth_required(permission='client-service.responsible.view')
 def responsible_persons():
     persons = ResponsiblePerson.query.order_by(ResponsiblePerson.full_name).all()
     all_complex_names_tuples = db.session.query(EstateHouses.complex_name).filter(EstateHouses.complex_name.isnot(None),
@@ -754,20 +1822,27 @@ def responsible_persons():
     all_complex_names = [name[0] for name in all_complex_names_tuples]
 
     all_application_types = ApplicationType.query.order_by(ApplicationType.name).all()
-    all_users = User.query.order_by(User.username).all()
+    
+    # Получаем пользователей из Gateway вместо локальной БД
+    from .auth_utils import get_gateway_users
+    all_users = get_gateway_users()
+    
     return render_template('responsible.html',
                            persons=persons,
                            all_complex_names=all_complex_names,
-                           all_application_types=all_application_types,all_users=all_users)
+                           all_application_types=all_application_types,
+                           all_users=all_users)
 
 
-@main.route('/client-service/responsible', methods=['POST'])
-@login_required
-@permission_required('Админ')
+@main.route('/responsible', methods=['POST'])
+@auth_required(permission='client-service.responsible.create')
 def create_responsible_person():
     form_data = request.form
-    new_person = ResponsiblePerson(full_name=form_data.get('full_name'), email=form_data.get('email'),
-        user_id=form_data.get('user_id'))
+    new_person = ResponsiblePerson(
+        full_name=form_data.get('full_name'),
+        email=form_data.get('email'),
+        gateway_user_id=form_data.get('user_id') or None  # Gateway User ID
+    )
 
     selected_app_type_names = form_data.getlist('application_types')
     new_person.application_types = selected_app_type_names
@@ -788,15 +1863,14 @@ def create_responsible_person():
     return redirect(url_for('main.responsible_persons'))
 
 
-@main.route('/client-service/responsible/<int:person_id>/update', methods=['POST'])
-@login_required
-@permission_required('Админ')
+@main.route('/responsible/<int:person_id>/update', methods=['POST'])
+@auth_required(permission='client-service.responsible.edit')
 def update_responsible_person(person_id):
     person = ResponsiblePerson.query.get_or_404(person_id)
     form_data = request.form
     person.full_name = form_data.get('full_name')
     person.email = form_data.get('email')
-    person.user_id = form_data.get('user_id') or None
+    person.gateway_user_id = form_data.get('user_id') or None  # Gateway User ID
 
     selected_app_type_names = form_data.getlist('application_types')
     person.application_types = selected_app_type_names
@@ -816,9 +1890,8 @@ def update_responsible_person(person_id):
     return redirect(url_for('main.responsible_persons'))
 
 
-@main.route('/client-service/responsible/<int:person_id>/delete', methods=['POST'])
-@login_required
-@permission_required('Админ')
+@main.route('/responsible/<int:person_id>/delete', methods=['POST'])
+@auth_required(permission='client-service.responsible.delete')
 def delete_responsible_person(person_id):
     person = ResponsiblePerson.query.get_or_404(person_id)
     name = person.full_name
@@ -832,8 +1905,8 @@ def delete_responsible_person(person_id):
     return redirect(url_for('main.responsible_persons'))
 
 
-@main.route('/client-service/api/responsible')
-@login_required
+@main.route('/api/responsible')
+@auth_required
 def get_responsible_persons():
     complex_name, app_type = request.args.get('complex_name'), request.args.get('application_type')
     if not complex_name or not app_type:
@@ -855,26 +1928,47 @@ def get_responsible_persons():
     return jsonify([{'id': p['id'], 'name': p['full_name'], 'email': p['email']} for p in final_persons])
 
 
-@main.route('/client-service/application/<int:app_id>/update_status', methods=['POST'])
-@login_required
-@permission_required('Специалист КЦ', 'Менеджер ДКС', 'Менеджер отдела оформления', 'Менеджер ОГР', 'Админ')
+@main.route('/application/<int:app_id>/update_status', methods=['POST'])
+@auth_required(permission='client-service.applications.status.change')
 def update_application_status(app_id):
     app = Application.query.get_or_404(app_id)
-    is_admin = current_user.has_role('Админ')
-    # Проверяем, привязан ли текущий пользователь к ответственному по этой заявке
-    is_responsible = (current_user.responsible_person_profile and
-                      current_user.responsible_person_profile.id == app.responsible_person_id)
+    
+    from .auth_utils import has_permission, get_current_user_id, get_or_create_local_user
+    
+    # Получаем/создаём локального пользователя для author_id
+    local_user = get_or_create_local_user()
+    
+    # Проверяем права доступа
+    has_admin_rights = has_permission('client-service.applications.view.all')
+    
+    # Проверяем, является ли пользователь ответственным по этой заявке
+    is_responsible = False
+    current_gateway_user_id = get_current_user_id()
+    if current_gateway_user_id:
+        # Находим ResponsiblePerson по gateway_user_id
+        responsible_person = ResponsiblePerson.query.filter_by(gateway_user_id=current_gateway_user_id).first()
+        if responsible_person:
+            is_responsible = responsible_person.id == app.responsible_person_id
 
-    if not (is_admin or is_responsible):
+    # Для заявок без договора (NC-xxx или старый SYSTEM-001) разрешаем всем пользователям с правами доступа
+    is_no_contract = (app.agreement_number and 
+                      (app.agreement_number.startswith('NC-') or 
+                       app.agreement_number == 'SYSTEM-001' or
+                       app.client.contacts_buy_name == "СИСТЕМНЫЙ КЛИЕНТ (для заявок без договора)"))
+    
+    if not (has_admin_rights or is_responsible or is_no_contract):
         abort(403)  # Forbidden
 
     new_status, comment = request.form.get('status'), request.form.get('comment')
+    # Определяем страницу возврата (карточка заявки или карточка клиента)
+    redirect_to = request.form.get('next') or request.args.get('next') or url_for('main.client_card', client_id=app.client_id)
+    
     if not new_status or not comment:
         flash('Для смены статуса необходимо выбрать новый статус и оставить комментарий.', 'danger')
-        return redirect(url_for('main.client_card', client_id=app.client_id))
+        return redirect(redirect_to)
     if app.status == new_status:
         flash('Новый статус совпадает с текущим. Изменений не внесено.', 'info')
-        return redirect(url_for('main.client_card', client_id=app.client_id))
+        return redirect(redirect_to)
     old_status = app.status
     app.status = new_status
     # Обновляем временной штамп последнего изменения статуса
@@ -889,7 +1983,7 @@ def update_application_status(app_id):
         app.completed_at = None
     
     log_entry = ApplicationLog(application=app, action=f"Статус изменен: {old_status} -> {new_status}", 
-                               comment=comment, author_id=current_user.id)
+                               comment=comment, author_id=local_user.id if local_user else None)
     db.session.add(log_entry)
     try:
         db.session.commit()
@@ -897,11 +1991,11 @@ def update_application_status(app_id):
     except Exception as e:
         db.session.rollback()
         flash(f'Ошибка при изменении статуса: {e}', 'danger')
-    return redirect(url_for('main.client_card', client_id=app.client_id))
+    return redirect(redirect_to)
 
 
-@main.route('/client-service/api/application/<int:app_id>/logs')
-@login_required
+@main.route('/api/application/<int:app_id>/logs')
+@auth_required
 def get_application_logs(app_id):
     Application.query.get_or_404(app_id)
     logs = ApplicationLog.query.filter_by(application_id=app_id).options(
@@ -914,16 +2008,14 @@ def get_application_logs(app_id):
           'author': log.author.username if log.author else 'Система'} for log in logs])
 
 
-@main.route('/client-service/reports')
-@login_required
-@permission_required('Админ')
+@main.route('/reports')
+@auth_required(permission='client-service.reports.view')
 def reports():
     return render_template('reports.html')
 
 
-@main.route('/client-service/reports/download', methods=['POST'])
-@login_required
-@permission_required('Специалист КЦ', 'Менеджер ДКС', 'Админ')
+@main.route('/reports/download', methods=['POST'])
+@auth_required(permission='client-service.reports.download')
 def download_report():
     start_date_str, end_date_str = request.form.get('start_date'), request.form.get('end_date')
     if not start_date_str or not end_date_str:
@@ -1026,9 +2118,8 @@ def download_report():
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
-@main.route('/client-service/reports/download-completed', methods=['POST'])
-@login_required
-@permission_required('Специалист КЦ', 'Менеджер ДКС', 'Админ')
+@main.route('/reports/download-completed', methods=['POST'])
+@auth_required(permission='client-service.reports.download')
 def download_completed_report():
     """Генерирует отчет по завершенным заявкам за указанный период"""
     start_date_str, end_date_str = request.form.get('start_date'), request.form.get('end_date')
@@ -1157,9 +2248,8 @@ def download_completed_report():
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
-@main.route('/client-service/deadlines/upload', methods=['GET', 'POST'])
-@login_required
-@admin_required
+@main.route('/deadlines/upload', methods=['GET', 'POST'])
+@auth_required(permission='client-service.admin.settings')
 def upload_deadlines():
     if request.method == 'POST':
         if 'file' not in request.files:
@@ -1244,9 +2334,8 @@ def upload_deadlines():
     return render_template('upload_deadlines.html')
 
 
-@main.route('/client-service/deadlines/template')
-@login_required
-@admin_required
+@main.route('/deadlines/template')
+@auth_required(permission='client-service.admin.settings')
 def download_deadlines_template():
     try:
         buffer = io.BytesIO()
@@ -1295,18 +2384,16 @@ def download_deadlines_template():
         return redirect(url_for('main.upload_deadlines'))
 
 
-@main.route('/client-service/admin/email-logs')
-@login_required
-@admin_required
+@main.route('/admin/email-logs')
+@auth_required(permission='client-service.admin.logs')
 def email_logs():
     page = request.args.get('page', 1, type=int)
     logs = EmailLog.query.order_by(EmailLog.timestamp.desc()).paginate(page=page, per_page=20)
     return render_template('email_logs.html', logs=logs)
 
 
-@main.route('/client-service/admin/defect-types', methods=['GET', 'POST'])
-@login_required
-@admin_required
+@main.route('/admin/defect-types', methods=['GET', 'POST'])
+@auth_required(permission='client-service.admin.settings')
 def manage_defect_types():
     if request.method == 'POST':
         new_type_name = request.form.get('name')
@@ -1327,9 +2414,8 @@ def manage_defect_types():
     return render_template('manage_defect_types.html', defect_types=defect_types)
 
 
-@main.route('/client-service/admin/defect-types/<int:type_id>/delete', methods=['POST'])
-@login_required
-@admin_required
+@main.route('/admin/defect-types/<int:type_id>/delete', methods=['POST'])
+@auth_required(permission='client-service.admin.settings')
 def delete_defect_type(type_id):
     type_to_delete = DefectType.query.get_or_404(type_id)
     try:
@@ -1342,9 +2428,8 @@ def delete_defect_type(type_id):
     return redirect(url_for('main.manage_defect_types'))
 
 
-@main.route('/client-service/admin/application-types', methods=['GET', 'POST'])
-@login_required
-@admin_required
+@main.route('/admin/application-types', methods=['GET', 'POST'])
+@auth_required(permission='client-service.admin.settings')
 def manage_application_types():
     if request.method == 'POST':
         name = request.form.get('name')
@@ -1407,9 +2492,8 @@ def manage_application_types():
     return render_template('manage_application_types.html', app_types=app_types, template_tags=template_tags)
 
 
-@main.route('/client-service/admin/application-types/<int:type_id>/download')
-@login_required
-@admin_required
+@main.route('/admin/application-types/<int:type_id>/download')
+@auth_required(permission='client-service.admin.settings')
 def download_application_template(type_id):
     """Скачивание шаблона Word для типа заявки"""
     app_type = ApplicationType.query.get_or_404(type_id)
@@ -1437,9 +2521,8 @@ def download_application_template(type_id):
     )
 
 
-@main.route('/client-service/admin/application-types/<int:type_id>/delete', methods=['POST'])
-@login_required
-@admin_required
+@main.route('/admin/application-types/<int:type_id>/delete', methods=['POST'])
+@auth_required(permission='client-service.admin.settings')
 def delete_application_type(type_id):
     app_type_to_delete = ApplicationType.query.get_or_404(type_id)
 
@@ -1457,9 +2540,8 @@ def delete_application_type(type_id):
     return redirect(url_for('main.manage_application_types'))
 
 
-@main.route('/client-service/application/<int:app_id>/delete', methods=['POST'])
-@login_required
-@admin_required
+@main.route('/application/<int:app_id>/delete', methods=['POST'])
+@auth_required(permission='client-service.applications.delete')
 def delete_application(app_id):
     """
     Удаляет заявку и все связанные с ней данные (дефекты, логи).
@@ -1480,5 +2562,37 @@ def delete_application(app_id):
     # Перенаправляем пользователя обратно на страницу со списком заявок
     return redirect(url_for('main.applications'))
 
+
+@main.route('/api/housing-complexes', methods=['GET'])
+@auth_required()
+def get_housing_complexes():
+    """API для получения списка уникальных ЖК"""
+    try:
+        result = db.session.execute(
+            db.text('SELECT DISTINCT complex_name FROM estate_houses WHERE complex_name IS NOT NULL ORDER BY complex_name')
+        ).fetchall()
+        complexes = [row[0] for row in result]
+        return jsonify({'complexes': complexes})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@main.route('/api/house-numbers', methods=['GET'])
+@auth_required()
+def get_house_numbers():
+    """API для получения списка домов для выбранного ЖК"""
+    complex_name = request.args.get('complex')
+    if not complex_name:
+        return jsonify({'error': 'Complex name is required'}), 400
+    
+    try:
+        result = db.session.execute(
+            db.text('SELECT DISTINCT name FROM estate_houses WHERE complex_name = :complex ORDER BY name'),
+            {'complex': complex_name}
+        ).fetchall()
+        houses = [row[0] for row in result]
+        return jsonify({'houses': houses})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 

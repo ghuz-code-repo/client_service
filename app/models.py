@@ -2,25 +2,28 @@
 import datetime
 import json
 from .extensions import db
-from werkzeug.security import generate_password_hash, check_password_hash
-from flask_login import UserMixin
 
-class User(UserMixin, db.Model):
+
+class User(db.Model):
+    """
+    Модель-прослойка для связи gateway пользователей с локальными данными.
+    
+    Аутентификация и управление пользователями осуществляется через Gateway.
+    Эта модель используется только для:
+    - FK-связей: Application.creator_id, ApplicationLog.author_id
+    - Маппинга gateway_user_id (MongoDB ObjectID) → local integer id
+    """
     __tablename__ = 'users'
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(64), index=True, unique=True, nullable=False)
-    password_hash = db.Column(db.String(256))
+    # password_hash удалён - аутентификация через Gateway
     role = db.Column(db.String(64), nullable=False)
-    # НОВАЯ СВЯЗЬ: профиль ответственного, привязанный к этому пользователю
-    responsible_person_profile = db.relationship('ResponsiblePerson', backref='user_account', uselist=False, lazy='joined')
-
-    def set_password(self, password):
-        self.password_hash = generate_password_hash(password)
-
-    def check_password(self, password):
-        return check_password_hash(self.password_hash, password)
+    
+    # Связь с Gateway auth-service
+    auth_user_id = db.Column(db.String(24), unique=True, nullable=True, index=True)
 
     def has_role(self, *roles):
+        """Проверка роли. Примечание: role синхронизируется с Gateway."""
         return self.role in roles
 
 responsible_assignments = db.Table('responsible_assignments',
@@ -37,8 +40,8 @@ class ResponsiblePerson(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     full_name = db.Column(db.String(255), nullable=False)
     email = db.Column(db.String(255), nullable=False, unique=True)
-    # НОВОЕ ПОЛЕ: ID пользователя, к которому привязан этот ответственный
-    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, unique=True)
+    # Gateway User ID (MongoDB ObjectID) вместо локального user_id
+    gateway_user_id = db.Column(db.String(24), nullable=True, unique=True, index=True)
     application_types_json = db.Column(db.Text, default='[]')
     assigned_complexes = db.relationship('EstateHouses', secondary=responsible_assignments,
                                          lazy='subquery',
@@ -78,6 +81,9 @@ class Application(db.Model):
     source = db.Column(db.String(100), nullable=True, default='Звонок')  # Источник заявки
     # НОВОЕ ПОЛЕ: временной штамп последнего изменения статуса
     last_status_change = db.Column(db.DateTime, nullable=True, default=datetime.datetime.now)
+    # НОВЫЕ ПОЛЯ: ЖК и номер дома для заявок без договора
+    housing_complex = db.Column(db.String(255), nullable=True)  # Название ЖК
+    house_number = db.Column(db.String(255), nullable=True)  # Номер дома
     defects = db.relationship('Defect', backref='application', lazy=True, cascade="all, delete-orphan")
     logs = db.relationship('ApplicationLog', backref='application', lazy=True, cascade="all, delete-orphan")
     # НОВАЯ СВЯЗЬ: объект создателя заявки
@@ -119,6 +125,8 @@ class EstateDealsContacts(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     contacts_buy_name = db.Column(db.String(255))
     contacts_buy_phones = db.Column(db.String(255))
+    # НОВОЕ ПОЛЕ: комментарий к клиенту (для описания компании, ответственных и т.д.)
+    client_comment = db.Column(db.Text, nullable=True)
     deals = db.relationship('EstateDeals', backref='contact', lazy='dynamic')
     applications = db.relationship('Application', backref='client', lazy='dynamic')
 
@@ -157,6 +165,8 @@ class Client:
         self.agreement_numbers = sorted(list(set(d.agreement_number for d in deals if d.agreement_number and d.agreement_number.strip())))
         self.deals_map = {}
         self.deals = []
+        complexes_set = set()
+        houses_set = set()
         for deal in deals:
             if not deal.agreement_number or not deal.agreement_number.strip():
                 continue
@@ -176,6 +186,12 @@ class Client:
             self.deals.append(type('obj', (), deal_info)())
             if house:
                 self.deals_map[deal.agreement_number] = house.complex_name
+                if house.complex_name:
+                    complexes_set.add(house.complex_name)
+                if house.name:
+                    houses_set.add(house.name)
+        self.complexes = sorted(complexes_set)
+        self.houses = sorted(houses_set)
 
 class EmailLog(db.Model):
     __tablename__ = 'email_logs'

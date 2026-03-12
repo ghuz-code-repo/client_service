@@ -103,7 +103,7 @@
                                     data-email="{{ person.email }}"
                                     data-app-types='{{ person.application_types_json }}'
                                     data-complexes='{{ person.assigned_complexes|map(attribute='complex_name')|unique|list|tojson }}'
-                                    data-user-id="{{ person.user_id or '' }}">
+                                    data-user-id="{{ person.gateway_user_id or '' }}">
                                 <i class="bi bi-pencil"></i>
                             </button>
                             <button class="btn btn-sm btn-outline-danger delete-btn"
@@ -152,7 +152,7 @@
                         <select class="form-select" id="user_id" name="user_id">
                             <option value="">Не привязывать</option>
                             {% for user in all_users %}
-                            <option value="{{ user.id }}">{{ user.username }} ({{ user.role }})</option>
+                            <option value="{{ user.id }}">{{ user.full_name or user.username }}{% if user.email %} ({{ user.email }}){% endif %}</option>
                             {% endfor %}
                         </select>
                     </div>

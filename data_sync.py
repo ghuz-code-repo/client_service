@@ -1,4 +1,5 @@
 # data_sync.py
+import sys
 import time
 from sqlalchemy import create_engine, inspect
 from app.extensions import db
@@ -6,6 +7,11 @@ from app.models import EstateSells, EstateDeals, EstateDealsContacts, EstateHous
 from config import Config
 from sqlalchemy.orm import noload
 from app.models import EstateSells, EstateDeals, EstateDealsContacts, EstateHouses
+
+# Fix encoding for Docker logs
+sys.stdout.reconfigure(encoding='utf-8')
+sys.stderr.reconfigure(encoding='utf-8')
+
 # --- НОВОЕ: Устанавливаем размер порции данных для обработки ---
 # Это количество записей, которое будет загружаться в память за один раз.
 # 1000 - это хороший баланс между скоростью и использованием памяти.
@@ -45,9 +51,93 @@ def sync_data():
 
                 for model in models_to_clear:
                     table_name = model.__tablename__
-                    print(f"   - Очистка таблицы {table_name} с помощью прямого SQL-запроса...")
-                    # Заменяем ORM-метод на прямой SQL-запрос в той же транзакции
-                    con.execute(db.text(f'DELETE FROM {table_name}'))
+                    
+                    # ИСПРАВЛЕНИЕ: Для клиентов НЕ удаляем тех, кто создан локально для заявок без договора
+                    if table_name == 'estate_deals_contacts':
+                        print(f"   - Очистка таблицы {table_name} (сохраняя локальных клиентов)...")
+                        
+                        # Сначала негируем ID локальных NC-контактов (если ещё положительные)
+                        local_contacts_pos = con.execute(db.text('''
+                            SELECT DISTINCT c.id FROM estate_deals_contacts c
+                            JOIN estate_deals d ON d.contacts_buy_id = c.id
+                            WHERE (d.agreement_number LIKE 'NC-%' OR d.agreement_number = 'SYSTEM-001')
+                              AND c.id > 0
+                        ''')).fetchall()
+                        
+                        if local_contacts_pos:
+                            min_contact_id = con.execute(db.text(
+                                'SELECT MIN(id) FROM estate_deals_contacts WHERE id < 0'
+                            )).scalar() or 0
+                            next_neg_id = min(min_contact_id, 0) - 1
+                            
+                            for row in local_contacts_pos:
+                                old_cid = row[0]
+                                # Обновляем ID контакта
+                                con.execute(db.text(
+                                    'UPDATE estate_deals_contacts SET id = :new_id WHERE id = :old_id'
+                                ), {'new_id': next_neg_id, 'old_id': old_cid})
+                                # Обновляем FK в estate_deals
+                                con.execute(db.text(
+                                    'UPDATE estate_deals SET contacts_buy_id = :new_id WHERE contacts_buy_id = :old_id'
+                                ), {'new_id': next_neg_id, 'old_id': old_cid})
+                                # Обновляем FK в applications
+                                con.execute(db.text(
+                                    'UPDATE applications SET client_id = :new_id WHERE client_id = :old_id'
+                                ), {'new_id': next_neg_id, 'old_id': old_cid})
+                                next_neg_id -= 1
+                            
+                            print(f"   - Негировано {len(local_contacts_pos)} NC-контактов с положительными ID.")
+                        
+                        # Удаляем только НЕ-NC клиентов (с отрицательными ID контакты сохранятся)
+                        con.execute(db.text('''
+                            DELETE FROM estate_deals_contacts 
+                            WHERE id NOT IN (
+                                SELECT DISTINCT contacts_buy_id 
+                                FROM estate_deals 
+                                WHERE agreement_number LIKE 'NC-%' 
+                                   OR agreement_number = 'SYSTEM-001'
+                            )
+                        '''))
+                        print("   - Локальные клиенты (с договорами NC-* и SYSTEM-001) сохранены.")
+                    elif table_name == 'estate_deals':
+                        print(f"   - Очистка таблицы {table_name} (сохраняя договоры без договора)...")
+                        
+                        # Получаем NC/SYSTEM сделки с положительными ID
+                        local_deals = con.execute(db.text('''
+                            SELECT id, contacts_buy_id FROM estate_deals 
+                            WHERE (agreement_number LIKE 'NC-%' 
+                               OR agreement_number = 'SYSTEM-001')
+                              AND id > 0
+                        ''')).fetchall()
+                        
+                        # Генерируем последовательные отрицательные ID для сделок
+                        if local_deals:
+                            # Находим минимальный существующий отрицательный ID
+                            min_deal_id = con.execute(db.text(
+                                'SELECT MIN(id) FROM estate_deals WHERE id < 0'
+                            )).scalar() or 0
+                            next_neg_id = min(min_deal_id, 0) - 1
+                            
+                            for deal in local_deals:
+                                con.execute(db.text('''
+                                    UPDATE estate_deals 
+                                    SET id = :new_id 
+                                    WHERE id = :old_id
+                                '''), {'new_id': next_neg_id, 'old_id': deal[0]})
+                                next_neg_id -= 1
+                            
+                            print(f"   - Изменено {len(local_deals)} локальных договоров на отрицательные ID.")
+                        
+                        # Удаляем только НЕ локальные договоры
+                        con.execute(db.text('''
+                            DELETE FROM estate_deals 
+                            WHERE agreement_number NOT LIKE 'NC-%' 
+                              AND agreement_number != 'SYSTEM-001'
+                        '''))
+                        print("   - Локальные договоры (NC-* и SYSTEM-001) сохранены.")
+                    else:
+                        print(f"   - Очистка таблицы {table_name} с помощью прямого SQL-запроса...")
+                        con.execute(db.text(f'DELETE FROM {table_name}'))
 
                 print("   - Включаем проверку ключей обратно.")
                 con.execute(db.text('PRAGMA foreign_keys = ON'))
@@ -92,6 +182,13 @@ def sync_data():
                     # чтобы избежать дубликатов из-за lazy='joined' в модели.
                     chunk_query = db.select(model).options(noload(model.deals)).limit(CHUNK_SIZE).offset(offset)
                 # --- КОНЕЦ ИЗМЕНЕНИЯ ---
+                elif model == EstateDealsContacts:
+                    # Для EstateDealsContacts исключаем поле client_comment, которого нет в удаленной БД
+                    chunk_query = db.select(
+                        model.id,
+                        model.contacts_buy_name,
+                        model.contacts_buy_phones
+                    ).limit(CHUNK_SIZE).offset(offset)
                 elif model == EstateDeals:
                     # Для EstateDeals принудительно соединяем с родительскими таблицами,
                     # чтобы отфильтровать "осиротевшие" записи в источнике и избежать ошибок FOREIGN KEY.
@@ -115,8 +212,37 @@ def sync_data():
                 if not chunk:
                     break
 
+                # ИСПРАВЛЕНИЕ: Для клиентов и договоров фильтруем локальные данные
+                if model == EstateDealsContacts:
+                    # Получаем ID локальных клиентов (с договорами NC-* или SYSTEM-001)
+                    local_client_ids = local_session.execute(db.text('''
+                        SELECT DISTINCT contacts_buy_id 
+                        FROM estate_deals 
+                        WHERE agreement_number LIKE 'NC-%' 
+                           OR agreement_number = 'SYSTEM-001'
+                    ''')).fetchall()
+                    local_client_ids_set = {row[0] for row in local_client_ids}
+                    
+                    # Фильтруем chunk - исключаем локальных клиентов
+                    chunk = [record for record in chunk if record['id'] not in local_client_ids_set]
+                    
+                    if local_client_ids_set:
+                        print(f"    - Исключено {len(local_client_ids_set)} локальных клиентов из синхронизации.")
+                
+                elif model == EstateDeals:
+                    # Для договоров исключаем NC-* и SYSTEM-001 (они не должны приходить из MacroCRM)
+                    # Но на всякий случай фильтруем
+                    original_count = len(chunk)
+                    chunk = [record for record in chunk 
+                            if not (record.get('agreement_number', '').startswith('NC-') or 
+                                   record.get('agreement_number') == 'SYSTEM-001')]
+                    filtered_count = original_count - len(chunk)
+                    if filtered_count > 0:
+                        print(f"    - Исключено {filtered_count} локальных договоров из синхронизации.")
+
                 # Сразу записываем полученную порцию в локальную БД
-                local_session.bulk_insert_mappings(model, chunk)
+                if chunk:  # Проверяем, что chunk не пустой после фильтрации
+                    local_session.bulk_insert_mappings(model, chunk)
 
                 chunk_size = len(chunk)
                 model_records_synced += chunk_size

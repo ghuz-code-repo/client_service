@@ -20,19 +20,30 @@ class PrefixMiddleware:
         script_name = environ.get('SCRIPT_NAME', '')
         path_info = environ.get('PATH_INFO', '')
         
-        # Debug log every request
-        print(f"Request before middleware: SCRIPT_NAME='{script_name}', PATH_INFO='{path_info}'")
+        # Check for X-Forwarded-Prefix header (set by nginx)
+        forwarded_prefix = environ.get('HTTP_X_FORWARDED_PREFIX', '').rstrip('/')
         
-        # If path starts with prefix, adjust PATH_INFO and SCRIPT_NAME
-        if path_info.startswith(self.prefix):
+        # Debug: print all HTTP headers
+        http_headers = {k: v for k, v in environ.items() if k.startswith('HTTP_')}
+        print(f"Request before middleware: SCRIPT_NAME='{script_name}', PATH_INFO='{path_info}', X-Forwarded-Prefix='{forwarded_prefix}'")
+        print(f"All HTTP headers: {http_headers}")
+        
+        # Special handling for static file requests (nginx sends /static/ without prefix)
+        if path_info.startswith('/static'):
+            # Static file request from nginx - no adjustments needed
+            # Flask will handle it with its static file handler
+            print(f"Static file request: PATH_INFO='{path_info}' - no prefix adjustment")
+            return self.wsgi_app(environ, start_response)
+        
+        # If we have a forwarded prefix from nginx, always use it
+        if forwarded_prefix:
+            environ['SCRIPT_NAME'] = script_name + forwarded_prefix
+            # PATH_INFO stays as is (already stripped by nginx rewrite)
+            print(f"Using forwarded prefix: SCRIPT_NAME='{environ['SCRIPT_NAME']}', PATH_INFO='{environ['PATH_INFO']}'")
+        # Fallback: If path starts with prefix, adjust PATH_INFO and SCRIPT_NAME
+        elif path_info.startswith(self.prefix):
             environ['SCRIPT_NAME'] = script_name + self.prefix
             environ['PATH_INFO'] = path_info[len(self.prefix):] or '/'
             print(f"Path adjusted: SCRIPT_NAME='{environ['SCRIPT_NAME']}', PATH_INFO='{environ['PATH_INFO']}'")
-        
-        # Special handling for static file requests
-        elif path_info.startswith('/static'):
-            # This might be a static file request without prefix
-            environ['PATH_INFO'] = self.prefix + path_info
-            print(f"Rewriting static path to: {environ['PATH_INFO']}")
         
         return self.wsgi_app(environ, start_response)

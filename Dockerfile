@@ -20,14 +20,18 @@ ENV PYTHONUNBUFFERED=1
 WORKDIR /app
 
 # Copy the requirements file into the container at /app
-COPY requirements.txt .
+COPY client_service/requirements.txt .
 
 # Install any needed packages specified in requirements.txt
 # Use --no-cache-dir to reduce image size
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Copy auth-connector package and install it (will be updated on each build)
+COPY auth-connector /tmp/auth-connector
+RUN pip install --no-cache-dir --force-reinstall /tmp/auth-connector
+
 # Copy the rest of the application code into the container at /app
-COPY . .
+COPY client_service /app
 
 # Make port 5002 available to the world outside this container
 EXPOSE 80
@@ -37,5 +41,5 @@ ENV FLASK_APP=run.py
 ENV FLASK_RUN_HOST=0.0.0.0
 ENV FLASK_RUN_PORT=80
 
-# Run app.py when the container launches
-CMD ["python", "run.py"]
+# Run with Gunicorn for production
+CMD ["gunicorn", "--bind", "0.0.0.0:80", "--workers", "1", "--timeout", "120", "run:app"]

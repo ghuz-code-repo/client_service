@@ -4,24 +4,33 @@ services:
     image: client-service-service
     container_name: client-service-service
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: client_service/Dockerfile
     labels:
-      - "nginx.auth=false"
+      - "nginx.auth=true"  # Enable gateway authentication
     volumes:
       - ./instance:/app/instance
       - ./app/word_templates:/app/app/word_templates
       - ./app/templates:/app/app/templates
     env_file:
       - .env
+    environment:
+      - AUTH_SERVICE_URL=http://auth-service:80
+      - NOTIFICATION_SERVICE_URL=http://notification-service:80
+      - CONTAINER_NAME=client-service-service  # For service discovery registration
     networks:
-      - service_network
-      - public_network
+      - service_network     # Внутренняя сеть сервисов
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:80/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
 
 networks:
   service_network:
     external: true
     name: service_network
-  public_network:
+  data_network:
     external: true
-    name: public_network
+    name: data_network

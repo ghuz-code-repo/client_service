@@ -10,6 +10,10 @@ if os.path.exists(dotenv_path):
 
 
 class Config:
+    # --- Настройки для работы за прокси ---
+    # Flask использует APPLICATION_ROOT для генерации правильных URL через url_for()
+    APPLICATION_ROOT = '/client-service'
+    
     # --- Ключевые настройки безопасности ---
     SECRET_KEY = os.environ.get('SECRET_KEY')
     ADMIN_USERNAME = os.environ.get('ADMIN_USERNAME', 'admin')
