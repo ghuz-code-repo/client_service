@@ -18,6 +18,10 @@ def auth_required(permission=None, any_of=None):
             if not g.get('auth_user_id'):
                 abort(401)
             
+            # Админы проходят всегда
+            if gateway_is_admin():
+                return f(*args, **kwargs)
+            
             # Проверяем разрешение если указано
             if permission and not has_permission(permission):
                 abort(403)
