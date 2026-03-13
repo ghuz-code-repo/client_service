@@ -321,7 +321,7 @@ def index():
     # Список статусов для фильтра
     app_statuses = ['В работе', 'Выполнено', 'Частично выполнено', 'Закрыто', 'Отклонено']
     # Список источников для фильтра
-    app_sources = ['Звонок', 'Email', 'Личный визит', 'Сайт', 'Другое']
+    app_sources = current_app.config['APPLICATION_SOURCES']
 
     # Собираем активные фильтры для передачи в пагинацию
     filter_keys = ['search', 'client_id', 'complex_name', 'house_name',
@@ -373,6 +373,7 @@ def client_card(client_id):
                            defect_types=defect_types,
                            application_types=application_types,
                            application_statuses=application_statuses,
+                           app_sources=current_app.config['APPLICATION_SOURCES'],
                            warranty_info=warranty_info,
                            current_date=current_date,
                            client_comment=contact.client_comment)
@@ -833,7 +834,7 @@ def import_template():
     # --- Собираем справочные данные ---
     rp_names = sorted([rp.full_name for rp in ResponsiblePerson.query.all()])
     app_type_names = sorted([at.name for at in ApplicationType.query.order_by(ApplicationType.name).all()])
-    sources_list = ['Звонок', 'Email', 'Личный визит', 'Сайт', 'Другое']
+    sources_list = current_app.config['APPLICATION_SOURCES']
     complexes = [row[0] for row in db.session.execute(
         db.text('SELECT DISTINCT complex_name FROM estate_houses WHERE complex_name IS NOT NULL AND complex_name != "" ORDER BY complex_name')
     ).fetchall()]
@@ -921,7 +922,7 @@ def import_template():
         ('Обновляемые поля', 'Описание'),
         ('Статус', 'В работе / Выполнено / Частично выполнено / Закрыто / Отклонено'),
         ('Ответственный', 'ФИО ответственного'),
-        ('Источник', 'Звонок / Email / Личный визит / Сайт / Другое'),
+        ('Источник', ' / '.join(current_app.config['APPLICATION_SOURCES'])),
         ('Срок выполнения', 'Дата в формате ДД.ММ.ГГГГ или ГГГГ-ММ-ДД'),
         ('Последний комментарий', 'Добавляет запись в журнал заявки'),
         ('Комментарий к заявке', 'Обновляет основной комментарий заявки'),
@@ -1529,7 +1530,7 @@ def applications():
 
     # Данные для фильтров
     responsible_persons = ResponsiblePerson.query.order_by(ResponsiblePerson.full_name).all()
-    app_sources = ['Звонок', 'Email', 'Личный визит', 'Сайт', 'Другое']
+    app_sources = current_app.config['APPLICATION_SOURCES']
     app_statuses = ['В работе', 'Выполнено', 'Частично выполнено', 'Закрыто', 'Отклонено']
 
     # Собираем активные фильтры для пагинации

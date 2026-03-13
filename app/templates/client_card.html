@@ -202,11 +202,9 @@
             <div class="form-floating mb-3">
                 <select class="form-select" id="source" name="source" required>
                     <option value="" selected>Выберите источник заявки...</option>
-                    <option value="Звонок">Звонок</option>
-                    <option value="Email">Email</option>
-                    <option value="Личный визит">Личный визит</option>
-                    <option value="Сайт">Сайт</option>
-                    <option value="Другое">Другое</option>
+                    {% for src in app_sources %}
+                    <option value="{{ src }}">{{ src }}</option>
+                    {% endfor %}
                 </select>
                 <label for="source">Источник заявки</label>
             </div>
