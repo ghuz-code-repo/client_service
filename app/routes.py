@@ -1581,10 +1581,22 @@ def create_application(client_id):
         from datetime import timedelta
         due_date = datetime.now() + timedelta(days=app_type.execution_days)
 
+    # Подтягиваем ЖК и Дом из EstateHouses по цепочке договора
+    housing_complex = None
+    house_number = None
+    deal = EstateDeals.query.filter_by(
+        agreement_number=agreement_number,
+        contacts_buy_id=client_id
+    ).first()
+    if deal and deal.sell and deal.sell.house:
+        housing_complex = deal.sell.house.complex_name
+        house_number = deal.sell.house.name
+
     new_app = Application(client_id=client_id, agreement_number=agreement_number,
                           application_type=application_type_name,
                           comment=comment, responsible_person_id=responsible_person_id,
-                          creator_id=creator_local_id, due_date=due_date, source=source)
+                          creator_id=creator_local_id, due_date=due_date, source=source,
+                          housing_complex=housing_complex, house_number=house_number)
     db.session.add(new_app)
 
     defects_data = {}
