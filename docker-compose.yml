@@ -20,6 +20,7 @@ services:
       - CONTAINER_NAME=client-service-service  # For service discovery registration
     networks:
       - service_network     # Внутренняя сеть сервисов
+      - egress_network      # Доступ к внешним ресурсам: MySQL MacroCRM (172.16.0.199)
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:80/health', timeout=5)"]
       interval: 30s
@@ -34,3 +35,6 @@ networks:
   data_network:
     external: true
     name: data_network
+  egress_network:
+    external: true
+    name: egress_network
