@@ -18,6 +18,17 @@ services:
       - AUTH_SERVICE_URL=http://auth-service:80
       - NOTIFICATION_SERVICE_URL=http://notification-service:80
       - CONTAINER_NAME=client-service-service  # For service discovery registration
+    # --- Харднинг: захваченный контейнер не сможет поднять привилегии ---
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE   # bind :80
+      - CHOWN
+      - SETUID
+      - SETGID
+      - DAC_OVERRIDE       # запись в bind-mount директории
     networks:
       - service_network     # Внутренняя сеть сервисов
       - egress_network      # Доступ к внешним ресурсам: MySQL MacroCRM (172.16.0.199)

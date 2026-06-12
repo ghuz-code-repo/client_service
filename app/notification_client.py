@@ -18,6 +18,14 @@ class NotificationServiceClient:
     def __init__(self):
         self.base_url = os.getenv('NOTIFICATION_SERVICE_URL', 'http://notification-service:80')
         self.timeout = 10
+        # Персональный ключ сервиса для аутентификации в notification-service
+        self.api_key = os.getenv('NOTIFICATION_API_KEY') or os.getenv('INTERNAL_API_KEY', '')
+
+    def _headers(self) -> dict:
+        headers = {}
+        if self.api_key:
+            headers['X-API-Key'] = self.api_key
+        return headers
     
     def send_email(self, recipient: str, subject: str, content: str, 
                    attachment_filename: Optional[str] = None,
@@ -64,7 +72,8 @@ class NotificationServiceClient:
             response = requests.post(
                 f"{self.base_url}/api/v1/notifications",
                 json=payload,
-                timeout=self.timeout
+                timeout=self.timeout,
+                headers=self._headers()
             )
             
             response.raise_for_status()
@@ -106,7 +115,8 @@ class NotificationServiceClient:
             response = requests.post(
                 f"{self.base_url}/api/v1/notifications/batch",
                 json=payload,
-                timeout=self.timeout
+                timeout=self.timeout,
+                headers=self._headers()
             )
             
             response.raise_for_status()
@@ -132,7 +142,8 @@ class NotificationServiceClient:
         try:
             response = requests.get(
                 f"{self.base_url}/api/v1/notifications/{notification_id}",
-                timeout=self.timeout
+                timeout=self.timeout,
+                headers=self._headers()
             )
             
             response.raise_for_status()
