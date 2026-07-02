@@ -684,10 +684,10 @@ def export_applications():
         ws.append([])  # Пустая строка
     
     # Заголовки колонок
-    headers = ["ID Заявки", "Дата создания", "Статус", "Тип заявки", "№ Договора", 
-               "ФИО Клиента", "Телефон клиента", "ЖК", "Дом", "Подъезд", "Номер квартиры",
-               "Ответственный", "Email ответственного", "Создатель заявки", "Источник", 
-               "Срок выполнения", "Дата завершения", "Просрочено", "Дата последнего изменения", 
+    headers = ["ID Заявки", "Дата создания", "Статус", "Тип заявки", "№ Договора",
+               "ФИО Клиента", "Телефон клиента", "Комментарий о клиенте", "ЖК", "Дом", "Подъезд", "Номер квартиры",
+               "Ответственный", "Email ответственного", "Создатель заявки", "Источник",
+               "Срок выполнения", "Дата завершения", "Просрочено", "Дата последнего изменения",
                "Последний комментарий", "Комментарий к заявке", "Дефекты (Тип: Комментарий)"]
     ws.append(headers)
     
@@ -734,9 +734,10 @@ def export_applications():
             app.agreement_number, 
             app.client.contacts_buy_name if app.client else "N/A",
             app.client.contacts_buy_phones if app.client else "N/A",
-            complex_name, 
-            house_name, 
-            entrance, 
+            app.client.client_comment if app.client and app.client.client_comment else "N/A",
+            complex_name,
+            house_name,
+            entrance,
             flat_num,
             app.responsible_person.full_name if app.responsible_person else "Не назначен",
             app.responsible_person.email if app.responsible_person else "N/A",
@@ -801,15 +802,15 @@ MAX_IMPORT_FILE_SIZE = 20 * 1024 * 1024  # 20 МБ
 # можно было использовать напрямую как файл импорта)
 IMPORT_TEMPLATE_HEADERS = [
     "ID Заявки", "Дата создания", "Статус", "Тип заявки", "№ Договора",
-    "ФИО Клиента", "Телефон клиента", "ЖК", "Дом", "Подъезд", "Номер квартиры",
+    "ФИО Клиента", "Телефон клиента", "Комментарий о клиенте", "ЖК", "Дом", "Подъезд", "Номер квартиры",
     "Ответственный", "Email ответственного", "Создатель заявки", "Источник",
     "Срок выполнения", "Дата завершения", "Просрочено", "Дата последнего изменения",
     "Последний комментарий", "Комментарий к заявке", "Дефекты (Тип: Комментарий)"
 ]
 
 # Индексы (1-based) колонок, которые влияют на импорт (редактируемые)
-IMPORT_EDITABLE_COLS = {1, 3, 4, 6, 7, 8, 9, 12, 15, 16, 20, 21}
-# Остальные колонки read-only: 2, 5, 10, 11, 13, 14, 17, 18, 19, 22
+IMPORT_EDITABLE_COLS = {1, 3, 4, 6, 7, 9, 10, 13, 16, 17, 21, 22}
+# Остальные колонки read-only: 2, 5, 8, 11, 12, 14, 15, 18, 19, 20, 23
 
 
 def _create_nc_contact_and_deal(contact_name, contact_phone, client_comment=None):
@@ -849,7 +850,7 @@ def _create_nc_contact_and_deal(contact_name, contact_phone, client_comment=None
 @auth_required(permission='client-service.applications.import')
 def import_template():
     """Скачивание пустого Excel-шаблона импорта с dropdown-списками.
-    Структура колонок идентична экспортному файлу (22 колонки)."""
+    Структура колонок идентична экспортному файлу (23 колонки)."""
     wb = Workbook()
     ws = wb.active
     ws.title = 'Импорт заявок'
@@ -885,7 +886,7 @@ def import_template():
         for i, val in enumerate(values, start=2):
             ws_ref[f'{col_letter}{i}'] = val
 
-    # --- Заголовки основного листа (22 колонки = как экспорт) ---
+    # --- Заголовки основного листа (23 колонки = как экспорт) ---
     white_fill = PatternFill(start_color='FFFFFF', end_color='FFFFFF', fill_type='solid')
     gray_fill = PatternFill(start_color='E0E0E0', end_color='E0E0E0', fill_type='solid')
     header_font = Font(bold=True)
@@ -895,8 +896,8 @@ def import_template():
         cell.fill = white_fill if col_idx in IMPORT_EDITABLE_COLS else gray_fill
         cell.alignment = Alignment(horizontal='center', vertical='center')
 
-    # Ширина колонок (22 колонки)
-    col_widths = [12, 18, 22, 20, 16, 25, 18, 20, 15, 12, 16, 25, 25, 20, 16, 16, 18, 14, 20, 35, 35, 35]
+    # Ширина колонок (23 колонки)
+    col_widths = [12, 18, 22, 20, 16, 25, 18, 30, 20, 15, 12, 16, 25, 25, 20, 16, 16, 18, 14, 20, 35, 35, 35]
     for i, w in enumerate(col_widths, start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
 
@@ -920,14 +921,14 @@ def import_template():
     add_ref_validation(ws, 'C', 'A', len(VALID_STATUSES_LIST), 3)
     # Тип заявки (D=4) → Справочник!C
     add_ref_validation(ws, 'D', 'C', len(app_type_names), 4)
-    # ЖК (H=8) → Справочник!E
-    add_ref_validation(ws, 'H', 'E', len(complexes), 8)
-    # Дом (I=9) → Справочник!F
-    add_ref_validation(ws, 'I', 'F', len(houses), 9)
-    # Ответственный (L=12) → Справочник!B
-    add_ref_validation(ws, 'L', 'B', len(rp_names), 12)
-    # Источник (O=15) → Справочник!D
-    add_ref_validation(ws, 'O', 'D', len(sources_list), 15)
+    # ЖК (I=9) → Справочник!E
+    add_ref_validation(ws, 'I', 'E', len(complexes), 9)
+    # Дом (J=10) → Справочник!F
+    add_ref_validation(ws, 'J', 'F', len(houses), 10)
+    # Ответственный (M=13) → Справочник!B
+    add_ref_validation(ws, 'M', 'B', len(rp_names), 13)
+    # Источник (P=16) → Справочник!D
+    add_ref_validation(ws, 'P', 'D', len(sources_list), 16)
 
     # --- Лист «Инструкция» ---
     ws_instr.column_dimensions['A'].width = 30
@@ -2081,7 +2082,7 @@ def download_report():
     ws = wb.active
     ws.title = "Отчет по заявкам"
     headers = ["ID Заявки", "Дата создания", "Статус", "Тип заявки", "№ Договора", "ФИО Клиента", "Телефон клиента",
-               "ЖК", "Дом", "Подъезд", "Номер квартиры",
+               "Комментарий о клиенте", "ЖК", "Дом", "Подъезд", "Номер квартиры",
                "Ответственный", "Email ответственного", "Источник", "Срок выполнения", "Дата завершения", "Просрочено",
                "Дата последнего изменения", "Последний комментарий", "Комментарий к заявке", "Дефекты (Тип: Комментарий)"]
     ws.append(headers)
@@ -2124,6 +2125,7 @@ def download_report():
         row_data = [app.id, app.created_at.strftime('%Y-%m-%d %H:%M:%S'), app.status, app.application_type,
                     app.agreement_number, app.client.contacts_buy_name if app.client else "N/A",
                     app.client.contacts_buy_phones if app.client else "N/A",
+                    app.client.client_comment if app.client and app.client.client_comment else "N/A",
                     complex_name, house_name, entrance, flat_num,
                     app.responsible_person.full_name if app.responsible_person else "Не назначен",
                     app.responsible_person.email if app.responsible_person else "N/A",
@@ -2193,9 +2195,9 @@ def download_completed_report():
     wb = Workbook()
     ws = wb.active
     ws.title = "Завершенные заявки"
-    headers = ["ID Заявки", "Дата создания", "Дата завершения", "Время выполнения (дней)", 
+    headers = ["ID Заявки", "Дата создания", "Дата завершения", "Время выполнения (дней)",
                "Статус", "Тип заявки", "№ Договора", "ФИО Клиента", "Телефон клиента",
-               "ЖК", "Дом", "Подъезд", "Номер квартиры",
+               "Комментарий о клиенте", "ЖК", "Дом", "Подъезд", "Номер квартиры",
                "Ответственный", "Email ответственного", "Создатель заявки", "Источник", 
                "Была просрочена", "Дата последнего изменения", "Последний комментарий", 
                "Комментарий к заявке", "Дефекты (Тип: Комментарий)"]
@@ -2255,6 +2257,7 @@ def download_completed_report():
             app.agreement_number, 
             app.client.contacts_buy_name if app.client else "N/A",
             app.client.contacts_buy_phones if app.client else "N/A",
+            app.client.client_comment if app.client and app.client.client_comment else "N/A",
             complex_name, house_name, entrance, flat_num,
             app.responsible_person.full_name if app.responsible_person else "Не назначен",
             app.responsible_person.email if app.responsible_person else "N/A",
