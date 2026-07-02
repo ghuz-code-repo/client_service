@@ -290,6 +290,21 @@ def index():
             clients_data[client_id] = {'contact': contact_info, 'deals': []}
         clients_data[client_id]['deals'].append(row)
 
+    # ЖК/Дом, указанные вручную в заявках (для NC-договоров без связки с недвижимостью)
+    housing_fallback_by_client = {}
+    if ordered_client_ids:
+        housing_rows = db.session.query(
+            Application.client_id, Application.agreement_number,
+            Application.housing_complex, Application.house_number
+        ).filter(
+            Application.client_id.in_(ordered_client_ids),
+            db.or_(Application.housing_complex.isnot(None), Application.house_number.isnot(None))
+        ).order_by(Application.created_at.desc()).all()
+        for cid, agr_num, hc, hn in housing_rows:
+            per_client = housing_fallback_by_client.setdefault(cid, {})
+            if agr_num and agr_num not in per_client:
+                per_client[agr_num] = {'complex_name': hc, 'house_name': hn}
+
     client_list = []
     for cid in ordered_client_ids:
         data = clients_data.get(cid)
@@ -308,7 +323,8 @@ def index():
                                                                 'finances_income_reserved': deal_row.get(
                                                                     'finances_income_reserved'), 'sell': sell_obj}))
             contact_obj = type('obj', (object,), data['contact'])
-            client_list.append(Client(contact_obj, structured_deals))
+            client_list.append(Client(contact_obj, structured_deals,
+                                      housing_fallback=housing_fallback_by_client.get(cid)))
 
     pagination = SQLPagination(client_list, page, per_page, total_clients)
     
@@ -347,7 +363,19 @@ def client_card(client_id):
     contact = EstateDealsContacts.query.get_or_404(client_id)
     deals_for_client = contact.deals.options(selectinload(EstateDeals.sell).selectinload(EstateSells.house)).all()
     applications = Application.query.filter_by(client_id=client_id).order_by(Application.created_at.desc()).all()
-    client = Client(contact, deals_for_client)
+
+    # ЖК/Дом, указанные вручную в заявках (для NC-договоров без связки с недвижимостью);
+    # applications отсортированы по убыванию даты — берём значения самой свежей заявки
+    housing_fallback = {}
+    for app in applications:
+        if app.agreement_number and app.agreement_number not in housing_fallback \
+                and (app.housing_complex or app.house_number):
+            housing_fallback[app.agreement_number] = {
+                'complex_name': app.housing_complex,
+                'house_name': app.house_number
+            }
+
+    client = Client(contact, deals_for_client, housing_fallback=housing_fallback)
 
     defect_types_query = DefectType.query.order_by(DefectType.name).all()
     defect_types = [{'id': dt.id, 'name': dt.name} for dt in defect_types_query]
@@ -671,8 +699,8 @@ def export_applications():
     # Заполнение данными
     for app in apps:
         # Получаем данные о недвижимости
-        complex_name = "N/A"
-        house_name = "N/A"
+        complex_name = app.housing_complex or "N/A"
+        house_name = app.house_number or "N/A"
         entrance = "N/A"
         flat_num = "N/A"
         
@@ -688,8 +716,8 @@ def export_applications():
                 flat_num = sell.geo_flatnum if sell.geo_flatnum else "N/A"
                 
                 if sell.house:
-                    complex_name = sell.house.complex_name if sell.house.complex_name else "N/A"
-                    house_name = sell.house.name if sell.house.name else "N/A"
+                    complex_name = sell.house.complex_name or complex_name
+                    house_name = sell.house.name or house_name
         
         defects_str = "; ".join([f"{d.defect_type}: {d.description}" for d in app.defects])
         is_overdue = "Да" if app.is_overdue else "Нет"
@@ -2063,8 +2091,8 @@ def download_report():
 
     for app in apps:
         # Получаем данные о недвижимости через связи
-        complex_name = "N/A"
-        house_name = "N/A"
+        complex_name = app.housing_complex or "N/A"
+        house_name = app.house_number or "N/A"
         entrance = "N/A"
         flat_num = "N/A"
         
@@ -2081,8 +2109,8 @@ def download_report():
                 flat_num = sell.geo_flatnum if sell.geo_flatnum else "N/A"
                 
                 if sell.house:
-                    complex_name = sell.house.complex_name if sell.house.complex_name else "N/A"
-                    house_name = sell.house.name if sell.house.name else "N/A"
+                    complex_name = sell.house.complex_name or complex_name
+                    house_name = sell.house.name or house_name
         
         defects_str = "; ".join([f"{d.defect_type}: {d.description}" for d in app.defects])
         
@@ -2178,8 +2206,8 @@ def download_completed_report():
 
     for app in apps:
         # Получаем данные о недвижимости через связи
-        complex_name = "N/A"
-        house_name = "N/A"
+        complex_name = app.housing_complex or "N/A"
+        house_name = app.house_number or "N/A"
         entrance = "N/A"
         flat_num = "N/A"
         
@@ -2196,8 +2224,8 @@ def download_completed_report():
                 flat_num = sell.geo_flatnum if sell.geo_flatnum else "N/A"
                 
                 if sell.house:
-                    complex_name = sell.house.complex_name if sell.house.complex_name else "N/A"
-                    house_name = sell.house.name if sell.house.name else "N/A"
+                    complex_name = sell.house.complex_name or complex_name
+                    house_name = sell.house.name or house_name
         
         defects_str = "; ".join([f"{d.defect_type}: {d.description}" for d in app.defects])
         

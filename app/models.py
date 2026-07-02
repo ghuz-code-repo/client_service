@@ -158,7 +158,11 @@ class ApplicationLog(db.Model):
     author = db.relationship('User', backref=db.backref('application_logs', lazy='dynamic'))
 
 class Client:
-    def __init__(self, contact, deals):
+    def __init__(self, contact, deals, housing_fallback=None):
+        # housing_fallback: {agreement_number: {'complex_name': ..., 'house_name': ...}} —
+        # ЖК/Дом, выбранные вручную при создании заявки без договора (NC-договоры не имеют
+        # связки sell → house, т.к. таблицы недвижимости синхронизируются из внешней CRM)
+        housing_fallback = housing_fallback or {}
         self.id = contact.id
         self.fio = contact.contacts_buy_name
         self.phone = contact.contacts_buy_phones
@@ -172,9 +176,12 @@ class Client:
                 continue
             sell = deal.sell
             house = sell.house if sell else None
+            fallback = housing_fallback.get(deal.agreement_number) or {}
+            complex_name = (house.complex_name if house else None) or fallback.get('complex_name')
+            house_name = (house.name if house else None) or fallback.get('house_name')
             deal_info = {
-                'complex_name': house.complex_name if house else 'N/A',
-                'house_name': house.name if house else 'N/A',
+                'complex_name': complex_name if complex_name else 'N/A',
+                'house_name': house_name if house_name else 'N/A',
                 'floor': sell.estate_floor if sell else 'N/A',
                 'riser': sell.estate_riser if sell else 'N/A',
                 'flat_num': sell.geo_flatnum if sell else 'N/A',
@@ -184,12 +191,11 @@ class Client:
                 'agreement_number': deal.agreement_number
             }
             self.deals.append(type('obj', (), deal_info)())
-            if house:
-                self.deals_map[deal.agreement_number] = house.complex_name
-                if house.complex_name:
-                    complexes_set.add(house.complex_name)
-                if house.name:
-                    houses_set.add(house.name)
+            if complex_name:
+                self.deals_map[deal.agreement_number] = complex_name
+                complexes_set.add(complex_name)
+            if house_name:
+                houses_set.add(house_name)
         self.complexes = sorted(complexes_set)
         self.houses = sorted(houses_set)
 
