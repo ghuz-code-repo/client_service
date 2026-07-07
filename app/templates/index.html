@@ -210,6 +210,63 @@
     </div>
 </div>
 
+{% if orphan_pagination.total > 0 %}
+<div class="card shadow-sm mb-4">
+    <div class="card-body">
+        <div class="mb-3">
+            <h2 class="card-title h5 mb-0"><i class="bi bi-exclamation-triangle me-2 text-warning"></i>Договора без контакта ({{ orphan_pagination.total }})</h2>
+            <p class="card-text text-muted mb-0">Договор есть в MacroCRM, но привязанный контакт (contacts_buy_id) там не найден — исправьте связь в источнике.</p>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-hover align-middle">
+                <thead class="table-light">
+                    <tr>
+                        <th scope="col">Номер договора</th>
+                        <th scope="col">ЖК</th>
+                        <th scope="col">Дом</th>
+                        <th scope="col">Квартира</th>
+                        <th scope="col">Сумма</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for deal in orphan_deals %}
+                    <tr>
+                        <td><span class="badge bg-secondary fw-normal">{{ deal.agreement_number }}</span></td>
+                        <td>{{ deal.complex_name or '—' }}</td>
+                        <td>{{ deal.house_name or '—' }}</td>
+                        <td>{{ deal.geo_flatnum or '—' }}</td>
+                        <td>{{ deal.deal_sum or '—' }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        {% if orphan_pagination.pages > 1 %}
+        <nav aria-label="Page navigation">
+            <ul class="pagination justify-content-center">
+                <li class="page-item {% if not orphan_pagination.has_prev %}disabled{% endif %}">
+                    <a class="page-link" href="{{ url_for('main.index', page=pagination.page, orphan_page=orphan_pagination.prev_num, **filter_params) }}">‹</a>
+                </li>
+                {% for p in orphan_pagination.iter_pages() %}
+                    {% if p %}
+                        <li class="page-item {% if p == orphan_pagination.page %}active{% endif %}">
+                            <a class="page-link" href="{{ url_for('main.index', page=pagination.page, orphan_page=p, **filter_params) }}">{{ p }}</a>
+                        </li>
+                    {% else %}
+                        <li class="page-item disabled"><span class="page-link">…</span></li>
+                    {% endif %}
+                {% endfor %}
+                <li class="page-item {% if not orphan_pagination.has_next %}disabled{% endif %}">
+                    <a class="page-link" href="{{ url_for('main.index', page=pagination.page, orphan_page=orphan_pagination.next_num, **filter_params) }}">›</a>
+                </li>
+            </ul>
+        </nav>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
 <!-- Модальное окно создания заявки без договора -->
 <div class="modal fade" id="createGeneralApplicationModal" tabindex="-1" aria-labelledby="createGeneralApplicationModalLabel" aria-hidden="true">
   <div class="modal-dialog modal-lg">

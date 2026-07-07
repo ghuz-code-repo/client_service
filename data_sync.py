@@ -167,6 +167,8 @@ def sync_data():
 
             offset = 0
             model_records_synced = 0
+            sell_orphans_nulled = 0
+            contact_orphans_nulled = 0
 
             # Цикл для загрузки данных порциями
             while True:
@@ -190,12 +192,21 @@ def sync_data():
                         model.contacts_buy_phones
                     ).limit(CHUNK_SIZE).offset(offset)
                 elif model == EstateDeals:
-                    # Для EstateDeals принудительно соединяем с родительскими таблицами,
-                    # чтобы отфильтровать "осиротевшие" записи в источнике и избежать ошибок FOREIGN KEY.
+                    # LEFT JOIN вместо INNER: сделки без привязки к квартире/контакту
+                    # (estate_sell_id / contacts_buy_id IS NULL) больше не отсеиваются молча.
+                    # _sell_match/_contact_match ниже используются только чтобы отличить
+                    # "битую" ссылку на несуществующую в источнике запись (её обнуляем,
+                    # иначе упадёт FOREIGN KEY локальной БД) от изначально пустой.
                     chunk_query = (
-                        db.select(model)
-                        .join(EstateSells, model.estate_sell_id == EstateSells.estate_sell_id)
-                        .join(EstateDealsContacts, model.contacts_buy_id == EstateDealsContacts.id)
+                        db.select(
+                            model.id, model.estate_sell_id, model.deal_status_name,
+                            model.agreement_number, model.agreement_date, model.deal_sum,
+                            model.deal_area, model.contacts_buy_id, model.finances_income_reserved,
+                            EstateSells.estate_sell_id.label('_sell_match'),
+                            EstateDealsContacts.id.label('_contact_match'),
+                        )
+                        .outerjoin(EstateSells, model.estate_sell_id == EstateSells.estate_sell_id)
+                        .outerjoin(EstateDealsContacts, model.contacts_buy_id == EstateDealsContacts.id)
                         .limit(CHUNK_SIZE).offset(offset)
                     )
                 # --- КОНЕЦ ИЗМЕНЕНИЯ ---
@@ -230,11 +241,27 @@ def sync_data():
                         print(f"    - Исключено {len(local_client_ids_set)} локальных клиентов из синхронизации.")
                 
                 elif model == EstateDeals:
+                    # Обнуляем "битые" FK (запись есть, а связанной estate_sells/contacts
+                    # в источнике нет) перед вставкой — иначе нарушится FOREIGN KEY локальной БД.
+                    fixed_chunk = []
+                    for record in chunk:
+                        record = dict(record)
+                        sell_match = record.pop('_sell_match')
+                        contact_match = record.pop('_contact_match')
+                        if record['estate_sell_id'] is not None and sell_match is None:
+                            sell_orphans_nulled += 1
+                            record['estate_sell_id'] = None
+                        if record['contacts_buy_id'] is not None and contact_match is None:
+                            contact_orphans_nulled += 1
+                            record['contacts_buy_id'] = None
+                        fixed_chunk.append(record)
+                    chunk = fixed_chunk
+
                     # Для договоров исключаем NC-* и SYSTEM-001 (они не должны приходить из MacroCRM)
                     # Но на всякий случай фильтруем
                     original_count = len(chunk)
-                    chunk = [record for record in chunk 
-                            if not (record.get('agreement_number', '').startswith('NC-') or 
+                    chunk = [record for record in chunk
+                            if not (record.get('agreement_number', '').startswith('NC-') or
                                    record.get('agreement_number') == 'SYSTEM-001')]
                     filtered_count = original_count - len(chunk)
                     if filtered_count > 0:
@@ -253,6 +280,10 @@ def sync_data():
 
             # Сохраняем изменения в локальной БД после каждой таблицы
             local_session.commit()
+            if model == EstateDeals and (sell_orphans_nulled or contact_orphans_nulled):
+                print(f"    ⚠ Обнулено битых ссылок: estate_sell_id={sell_orphans_nulled}, "
+                      f"contacts_buy_id={contact_orphans_nulled} (запись есть в estate_deals, "
+                      f"связанной estate_sells/estate_deals_contacts нет в источнике).")
             print(f"✔️ Синхронизация таблицы {table_name} завершена. Всего записей: {model_records_synced}.\n")
 
         print(f"\n✔️ ЭТАП 2 ЗАВЕРШЕН. Всего синхронизировано {total_records_synced} записей.")

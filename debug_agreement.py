@@ -139,13 +139,14 @@ def check_remote_mysql(search_term):
                     deal_info['contact'] = dict(contact)
                     print(f"  ✓ Контакт id={contact_id}: name={name!r}, phones={phones!r}")
 
-                    # Проверка фильтров отображения
+                    # Пустые имя/телефон больше не прячут договор из листинга (показывается
+                    # заглушка "Нет имени"/"Нет телефона"), но фиксируем для полноты диагностики
                     if not name or name.strip() == '':
-                        print(f"    ⚠ Имя пустое — будет скрыт в листинге!")
-                        deal_info['problems'].append('contacts_buy_name is empty')
+                        print(f"    ⚠ Имя пустое — в листинге будет показано 'Нет имени'")
+                        deal_info['problems'].append('contacts_buy_name is empty (non-blocking)')
                     if not phones or phones.strip() == '':
-                        print(f"    ⚠ Телефон пустой — будет скрыт в листинге!")
-                        deal_info['problems'].append('contacts_buy_phones is empty')
+                        print(f"    ⚠ Телефон пустой — в листинге будет показано 'Нет телефона'")
+                        deal_info['problems'].append('contacts_buy_phones is empty (non-blocking)')
                 else:
                     print(f"  ✗ Контакт id={contact_id} НЕ НАЙДЕН!")
                     deal_info['problems'].append(f'contact {contact_id} not found')
@@ -155,40 +156,32 @@ def check_remote_mysql(search_term):
 
         # Проверка JOIN-запроса синхронизации
         section("2. ТЕСТ JOIN-ЗАПРОСА СИНХРОНИЗАЦИИ")
-        print("  Запрос data_sync.py использует INNER JOIN с estate_sells и estate_deals_contacts.")
-        print("  Если какая-то из связей отсутствует — договор не попадёт в локальную БД.\n")
+        print("  data_sync.py использует LEFT JOIN с estate_sells и estate_deals_contacts.")
+        print("  Договор ВСЕГДА попадёт в локальную БД; битая (не NULL, но не найденная)")
+        print("  ссылка на sell/contact просто обнулится перед вставкой.\n")
 
         for deal in deals:
             agr = deal['agreement_number']
-            sync_result = conn.execute(text(
-                "SELECT d.id, d.agreement_number "
-                "FROM estate_deals d "
-                "JOIN estate_sells s ON d.estate_sell_id = s.estate_sell_id "
-                "JOIN estate_deals_contacts c ON d.contacts_buy_id = c.id "
-                "WHERE d.id = :deal_id"
-            ), {"deal_id": deal['id']}).mappings().first()
+            # Битая ссылка = поле не NULL, но связанной записи в источнике нет
+            if deal['estate_sell_id'] is not None:
+                sells_ok = conn.execute(text(
+                    "SELECT 1 FROM estate_sells s WHERE s.estate_sell_id = :id"
+                ), {"id": deal['estate_sell_id']}).first()
+                if not sells_ok:
+                    print(f"  ⚠ {agr}: estate_sell_id={deal['estate_sell_id']} не существует "
+                          f"— при синхронизации обнулится (сделка всё равно попадёт в БД)")
 
-            if sync_result:
-                print(f"  ✓ {agr}: пройдёт через sync JOIN")
-            else:
-                print(f"  ✗ {agr}: ОТСЕИВАЕТСЯ sync JOIN!")
-                # Определяем какой именно join ломает
-                if deal['estate_sell_id'] is not None:
-                    sells_ok = conn.execute(text(
-                        "SELECT 1 FROM estate_deals d "
-                        "JOIN estate_sells s ON d.estate_sell_id = s.estate_sell_id "
-                        "WHERE d.id = :deal_id"
-                    ), {"deal_id": deal['id']}).first()
-                    if not sells_ok:
-                        print(f"    → estate_sells JOIN не проходит (sell_id={deal['estate_sell_id']} не существует)")
-                if deal['contacts_buy_id'] is not None:
-                    contacts_ok = conn.execute(text(
-                        "SELECT 1 FROM estate_deals d "
-                        "JOIN estate_deals_contacts c ON d.contacts_buy_id = c.id "
-                        "WHERE d.id = :deal_id"
-                    ), {"deal_id": deal['id']}).first()
-                    if not contacts_ok:
-                        print(f"    → estate_deals_contacts JOIN не проходит (contact_id={deal['contacts_buy_id']} не существует)")
+            if deal['contacts_buy_id'] is not None:
+                contacts_ok = conn.execute(text(
+                    "SELECT 1 FROM estate_deals_contacts c WHERE c.id = :id"
+                ), {"id": deal['contacts_buy_id']}).first()
+                if not contacts_ok:
+                    print(f"  ⚠ {agr}: contacts_buy_id={deal['contacts_buy_id']} не существует "
+                          f"— при синхронизации обнулится, договор попадёт в БД, НО не покажется "
+                          f"в листинге (там нужен контакт для группировки)")
+
+            if deal['estate_sell_id'] is None and deal['contacts_buy_id'] is None:
+                print(f"  ✓ {agr}: обе связи отсутствуют изначально (NULL) — пройдёт синхронизацию как есть")
 
         return results
 
@@ -222,9 +215,7 @@ def check_local_sqlite(search_term):
             "SELECT c.id, c.contacts_buy_name, c.contacts_buy_phones, d.agreement_number "
             "FROM estate_deals_contacts c "
             "JOIN estate_deals d ON c.id = d.contacts_buy_id "
-            "WHERE c.contacts_buy_name IS NOT NULL AND c.contacts_buy_name != '' "
-            "AND c.contacts_buy_phones IS NOT NULL AND c.contacts_buy_phones != '' "
-            "AND d.agreement_number IS NOT NULL AND TRIM(d.agreement_number) != '' "
+            "WHERE d.agreement_number IS NOT NULL AND TRIM(d.agreement_number) != '' "
             "AND d.agreement_number LIKE :search"
         ), {"search": f"%{search_term}%"}).mappings().all()
 
@@ -262,19 +253,22 @@ def print_summary(results):
             for p in problems:
                 print(f"    - {p}")
 
-            # Рекомендации
-            sync_blocking = any(x in p for p in problems for x in
-                                ['IS NULL', 'not found', 'estate_sells', 'contact'])
-            display_blocking = any('empty' in p for p in problems)
+            # Рекомендации (data_sync.py теперь LEFT JOIN: договор всегда попадёт в
+            # локальную БД, битая ссылка на contacts_buy_id/estate_sell_id просто обнулится)
+            contact_broken = any(('contacts_buy_id' in p and 'NULL' in p) or
+                                  ('contact' in p and 'not found' in p) for p in problems)
+            name_phone_empty = any('empty' in p for p in problems)
 
-            if sync_blocking:
-                print(f"\n    ПРИЧИНА: Договор не проходит INNER JOIN при синхронизации.")
-                print(f"    РЕШЕНИЕ: Заменить JOIN на LEFT JOIN в data_sync.py для EstateDeals,")
-                print(f"    или исправить данные в MacroCRM (заполнить связи).")
+            if contact_broken:
+                print(f"\n    ПРИЧИНА: contacts_buy_id отсутствует/битый в источнике.")
+                print(f"    ПОСЛЕДСТВИЕ: договор синхронизируется, но contacts_buy_id обнулится —")
+                print(f"    в листинге (INNER JOIN c-d в routes.py) он всё равно НЕ покажется,")
+                print(f"    т.к. договору нужен контакт для группировки в UI.")
+                print(f"    РЕШЕНИЕ: исправить связь в MacroCRM (заполнить/восстановить контакт).")
 
-            if display_blocking:
-                print(f"\n    ПРИЧИНА: Контакт с пустым именем/телефоном скрывается в листинге.")
-                print(f"    РЕШЕНИЕ: Заполнить имя/телефон в MacroCRM, или ослабить WHERE в routes.py.")
+            if name_phone_empty:
+                print(f"\n    ПРИМЕЧАНИЕ: пустое имя/телефон уже не блокирует показ —")
+                print(f"    в листинге будет 'Нет имени'/'Нет телефона'.")
 
 
 def main():

@@ -164,8 +164,8 @@ class Client:
         # связки sell → house, т.к. таблицы недвижимости синхронизируются из внешней CRM)
         housing_fallback = housing_fallback or {}
         self.id = contact.id
-        self.fio = contact.contacts_buy_name
-        self.phone = contact.contacts_buy_phones
+        self.fio = contact.contacts_buy_name or 'Нет имени'
+        self.phone = contact.contacts_buy_phones or 'Нет телефона'
         self.agreement_numbers = sorted(list(set(d.agreement_number for d in deals if d.agreement_number and d.agreement_number.strip())))
         self.deals_map = {}
         self.deals = []

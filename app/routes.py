@@ -244,10 +244,9 @@ def index():
     # --- Построение фильтров ---
     extra_where, params, has_app_filter = build_client_filters(request.args)
 
-    # Базовые условия (клиент с именем, телефоном и договором)
+    # Базовые условия (нужен только номер договора; пустое имя/телефон клиента
+    # больше не прячет договор из листинга — см. Client.fio/phone для заглушки)
     base_conditions = [
-        "c.contacts_buy_name IS NOT NULL", "c.contacts_buy_name!=''",
-        "c.contacts_buy_phones IS NOT NULL", "c.contacts_buy_phones!=''",
         "d.agreement_number IS NOT NULL", "d.agreement_number!=''"
     ]
 
@@ -327,7 +326,60 @@ def index():
                                       housing_fallback=housing_fallback_by_client.get(cid)))
 
     pagination = SQLPagination(client_list, page, per_page, total_clients)
-    
+
+    # --- Договора без привязанного контакта (contacts_buy_id обнулён при синхронизации,
+    # т.к. в источнике contacts_buy_id указывает на несуществующую запись) ---
+    orphan_page = request.args.get('orphan_page', 1, type=int)
+    orphan_per_page = 50
+    orphan_offset = (orphan_page - 1) * orphan_per_page
+
+    orphan_where = ["d.contacts_buy_id IS NULL", "d.agreement_number IS NOT NULL", "d.agreement_number!=''"]
+    orphan_params = {}
+
+    search_query = request.args.get('search', '').strip()
+    if search_query:
+        orphan_where.append("d.agreement_number LIKE :o_search")
+        orphan_params['o_search'] = f'%{search_query}%'
+
+    agreement_number = request.args.get('agreement_number', '').strip()
+    if agreement_number:
+        orphan_where.append("d.agreement_number LIKE :o_agreement")
+        orphan_params['o_agreement'] = f'%{agreement_number}%'
+
+    complex_name = request.args.get('complex_name', '').strip()
+    if complex_name:
+        orphan_where.append("h.complex_name = :o_complex_name")
+        orphan_params['o_complex_name'] = complex_name
+
+    house_name = request.args.get('house_name', '').strip()
+    if house_name:
+        orphan_where.append("h.name = :o_house_name")
+        orphan_params['o_house_name'] = house_name
+
+    orphan_from = """
+        FROM estate_deals d
+        LEFT JOIN estate_sells s ON d.estate_sell_id=s.estate_sell_id
+        LEFT JOIN estate_houses h ON s.house_id=h.house_id
+    """
+    orphan_where_clause = "WHERE " + " AND ".join(orphan_where)
+
+    orphan_total = db.session.execute(
+        text(f"SELECT COUNT(*) {orphan_from} {orphan_where_clause}"), orphan_params
+    ).scalar() or 0
+
+    orphan_params['limit'], orphan_params['offset'] = orphan_per_page, orphan_offset
+    orphan_rows = db.session.execute(text(f"""
+        SELECT d.agreement_number, d.deal_sum, d.finances_income_reserved,
+               s.estate_floor, s.estate_riser, s.geo_flatnum, s.estate_rooms,
+               h.complex_name, h.name AS house_name
+        {orphan_from} {orphan_where_clause}
+        ORDER BY d.agreement_number
+        LIMIT :limit OFFSET :offset
+    """), orphan_params).mappings().all()
+
+    orphan_deals = [dict(row) for row in orphan_rows]
+    orphan_pagination = SQLPagination(orphan_deals, orphan_page, orphan_per_page, orphan_total)
+
     # Получаем данные для модального окна и фильтров
     application_types = ApplicationType.query.order_by(ApplicationType.name).all()
     defect_types_query = DefectType.query.order_by(DefectType.name).all()
@@ -345,9 +397,11 @@ def index():
                    'overdue', 'app_source']
     filter_params = {k: request.args.get(k, '') for k in filter_keys if request.args.get(k, '').strip()}
 
-    return render_template('index.html', 
-                         clients=client_list, 
-                         pagination=pagination, 
+    return render_template('index.html',
+                         clients=client_list,
+                         pagination=pagination,
+                         orphan_deals=orphan_deals,
+                         orphan_pagination=orphan_pagination,
                          search_query=request.args.get('search', ''),
                          filter_params=filter_params,
                          application_types=application_types,
