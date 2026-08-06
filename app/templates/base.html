@@ -247,6 +247,14 @@
         _form: null,
         _ignoreSet: null,
 
+        /** Query-параметры пагинации: хранятся отдельно от фильтров, сбрасываются при «Применить». */
+        _pageParams: ['page', 'orphan_page'],
+
+        /** Ключ sessionStorage для состояния пагинации (префикс общий с фильтрами — чистится вместе). */
+        _pageStoreKey: function(pageKey) {
+            return 'crm_filters_page_' + pageKey;
+        },
+
         /** Проверяет, включено ли сохранение фильтров (по умолчанию — да). */
         isPersistEnabled: function() {
             var val = localStorage.getItem('crm_filters_persist');
@@ -278,6 +286,7 @@
          */
         init: function(pageKey, formId, ignore) {
             var key = 'crm_filters_' + pageKey;
+            var pageStoreKey = this._pageStoreKey(pageKey);
             var form = document.getElementById(formId || 'filterForm');
             if (!form) return;
 
@@ -288,11 +297,19 @@
             var persist = this.isPersistEnabled();
             var urlParams = new URLSearchParams(window.location.search);
             var hasQueryString = window.location.search.length > 1; // "?" минимум
+            var pageParams = new Set(this._pageParams);
 
-            // Собираем непустые фильтры (без page)
+            // Разделяем query-параметры: фильтры и состояние пагинации
             var toSave = new URLSearchParams();
+            var pagesToSave = new URLSearchParams();
             urlParams.forEach(function(v, k) {
-                if (k !== 'page' && v.trim()) toSave.set(k, v);
+                if (!v.trim()) return;
+                if (pageParams.has(k)) {
+                    // Первую страницу не храним — она и так по умолчанию
+                    if (v.trim() !== '1') pagesToSave.set(k, v.trim());
+                } else {
+                    toSave.set(k, v);
+                }
             });
             var hasActiveFilters = toSave.toString().length > 0;
 
@@ -304,13 +321,21 @@
                     } else {
                         sessionStorage.removeItem(key);
                     }
+                    if (pagesToSave.toString()) {
+                        sessionStorage.setItem(pageStoreKey, pagesToSave.toString());
+                    } else {
+                        sessionStorage.removeItem(pageStoreKey);
+                    }
                 }
             } else {
                 // Переход по ссылке / «Назад» без query string — восстанавливаем
                 if (persist) {
-                    var saved = sessionStorage.getItem(key);
-                    if (saved) {
-                        window.location.replace(window.location.pathname + '?' + saved);
+                    var saved = sessionStorage.getItem(key) || '';
+                    var savedPages = sessionStorage.getItem(pageStoreKey) || '';
+                    if (saved || savedPages) {
+                        var restore = new URLSearchParams(saved);
+                        new URLSearchParams(savedPages).forEach(function(v, k) { restore.set(k, v); });
+                        window.location.replace(window.location.pathname + '?' + restore.toString());
                         return;
                     }
                 }
@@ -326,6 +351,11 @@
                 el.addEventListener('input',  function() { self._hl(el, ignoreSet); });
             });
 
+            // «Применить» — новая выборка, поэтому пагинация сбрасывается на первую страницу
+            form.addEventListener('submit', function() {
+                sessionStorage.removeItem(pageStoreKey);
+            });
+
             // Синхронизация UI переключателя
             this.syncToggleUI();
         },
@@ -337,9 +367,10 @@
             }
         },
 
-        /** Очистить сохранённые фильтры (вызывается на кнопке «Сбросить»). */
+        /** Очистить сохранённые фильтры и пагинацию (вызывается на кнопке «Сбросить»). */
         clear: function(pageKey) {
             sessionStorage.removeItem('crm_filters_' + pageKey);
+            sessionStorage.removeItem(this._pageStoreKey(pageKey));
         },
 
         _highlightAll: function(form, ignoreSet) {

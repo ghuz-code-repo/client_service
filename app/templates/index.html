@@ -174,7 +174,7 @@
                         <td colspan="6" class="text-center text-muted py-4">
                             {% if filter_params %}
                             <p>Клиенты по заданным фильтрам не найдены.</p>
-                            <a href="{{ url_for('main.index') }}" class="btn btn-primary">Сбросить фильтры</a>
+                            <a href="{{ url_for('main.index') }}" class="btn btn-primary" onclick="CrmFilters.clear('clients')">Сбросить фильтры</a>
                             {% else %}
                             <p>Клиенты не найдены.</p>
                             {% endif %}

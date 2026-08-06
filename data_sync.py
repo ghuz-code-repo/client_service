@@ -88,17 +88,32 @@ def sync_data():
                             
                             print(f"   - Негировано {len(local_contacts_pos)} NC-контактов с положительными ID.")
                         
-                        # Удаляем только НЕ-NC клиентов (с отрицательными ID контакты сохранятся)
+                        # Удаляем только НЕ-NC клиентов (с отрицательными ID контакты сохранятся).
+                        # Клиентов, на которых ссылаются заявки, сохраняем тоже: estate_deals_contacts
+                        # в источнике содержит только владельцев действующих сделок, поэтому при
+                        # переуступке/переоформлении договора прежний владелец пропадает из источника,
+                        # и все его заявки осиротели бы (Application.client -> None, «N/A» в списке).
+                        # IS NOT NULL в подзапросах обязателен: NULL внутри NOT IN обнуляет всё условие.
                         con.execute(db.text('''
-                            DELETE FROM estate_deals_contacts 
+                            DELETE FROM estate_deals_contacts
                             WHERE id NOT IN (
-                                SELECT DISTINCT contacts_buy_id 
-                                FROM estate_deals 
-                                WHERE agreement_number LIKE 'NC-%' 
-                                   OR agreement_number = 'SYSTEM-001'
+                                SELECT DISTINCT contacts_buy_id
+                                FROM estate_deals
+                                WHERE (agreement_number LIKE 'NC-%'
+                                    OR agreement_number = 'SYSTEM-001')
+                                  AND contacts_buy_id IS NOT NULL
+                            )
+                            AND id NOT IN (
+                                SELECT DISTINCT client_id
+                                FROM applications
+                                WHERE client_id IS NOT NULL
                             )
                         '''))
-                        print("   - Локальные клиенты (с договорами NC-* и SYSTEM-001) сохранены.")
+                        kept_contacts = con.execute(db.text(
+                            'SELECT COUNT(*) FROM estate_deals_contacts'
+                        )).scalar()
+                        print(f"   - Сохранено {kept_contacts} клиентов "
+                              f"(договоры NC-*/SYSTEM-001 + те, на кого ссылаются заявки).")
                     elif table_name == 'estate_deals':
                         print(f"   - Очистка таблицы {table_name} (сохраняя договоры без договора)...")
                         
@@ -169,6 +184,21 @@ def sync_data():
             model_records_synced = 0
             sell_orphans_nulled = 0
             contact_orphans_nulled = 0
+            contacts_refreshed = 0
+
+            # Контакты, пережившие очистку на ЭТАПЕ 1 (NC-клиенты + те, на кого ссылаются
+            # заявки). Их нельзя вставлять повторно — PRIMARY KEY уже занят. Те из них,
+            # что ещё есть в источнике, обновляем; остальные остаются как есть.
+            preserved_contact_ids = set()
+            if model == EstateDealsContacts:
+                preserved_contact_ids = {
+                    row[0] for row in local_session.execute(
+                        db.text('SELECT id FROM estate_deals_contacts')
+                    ).fetchall()
+                }
+                if preserved_contact_ids:
+                    print(f"    - {len(preserved_contact_ids)} сохранённых клиентов: "
+                          f"вставка заменена на обновление.")
 
             # Цикл для загрузки данных порциями
             while True:
@@ -225,21 +255,18 @@ def sync_data():
 
                 # ИСПРАВЛЕНИЕ: Для клиентов и договоров фильтруем локальные данные
                 if model == EstateDealsContacts:
-                    # Получаем ID локальных клиентов (с договорами NC-* или SYSTEM-001)
-                    local_client_ids = local_session.execute(db.text('''
-                        SELECT DISTINCT contacts_buy_id 
-                        FROM estate_deals 
-                        WHERE agreement_number LIKE 'NC-%' 
-                           OR agreement_number = 'SYSTEM-001'
-                    ''')).fetchall()
-                    local_client_ids_set = {row[0] for row in local_client_ids}
-                    
-                    # Фильтруем chunk - исключаем локальных клиентов
-                    chunk = [record for record in chunk if record['id'] not in local_client_ids_set]
-                    
-                    if local_client_ids_set:
-                        print(f"    - Исключено {len(local_client_ids_set)} локальных клиентов из синхронизации.")
-                
+                    # Сохранённые клиенты уже есть локально — обновляем их вместо вставки,
+                    # чтобы имя/телефон не устаревали. NC-клиенты (id < 0) в источнике
+                    # отсутствуют, поэтому под обновление не попадают.
+                    if preserved_contact_ids:
+                        to_update = [dict(record) for record in chunk
+                                     if record['id'] in preserved_contact_ids]
+                        if to_update:
+                            local_session.bulk_update_mappings(model, to_update)
+                            contacts_refreshed += len(to_update)
+                        chunk = [record for record in chunk
+                                 if record['id'] not in preserved_contact_ids]
+
                 elif model == EstateDeals:
                     # Обнуляем "битые" FK (запись есть, а связанной estate_sells/contacts
                     # в источнике нет) перед вставкой — иначе нарушится FOREIGN KEY локальной БД.
@@ -280,6 +307,11 @@ def sync_data():
 
             # Сохраняем изменения в локальной БД после каждой таблицы
             local_session.commit()
+            if model == EstateDealsContacts and preserved_contact_ids:
+                stale = len(preserved_contact_ids) - contacts_refreshed
+                print(f"    ⚠ Сохранённых клиентов: {len(preserved_contact_ids)}, из них обновлено "
+                      f"из источника {contacts_refreshed}, осталось только локально {stale} "
+                      f"(NC-клиенты и прежние владельцы переуступленных договоров).")
             if model == EstateDeals and (sell_orphans_nulled or contact_orphans_nulled):
                 print(f"    ⚠ Обнулено битых ссылок: estate_sell_id={sell_orphans_nulled}, "
                       f"contacts_buy_id={contact_orphans_nulled} (запись есть в estate_deals, "
