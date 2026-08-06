@@ -17,19 +17,28 @@
   собственника (перепродажа), и перепривязка приписала бы чужую заявку.
 
   Источники восстановления, в порядке приоритета:
-    1. backups/*.sqlite — локальные бэкапы БД (самый свежий, где клиент ещё есть);
-    2. таблица contacts в MacroCRM — мастер-справочник, переживает удаление
-       записи из estate_deals_contacts.
+    1. --donor PATH — явно указанные копии app.db, где клиент ещё присутствует;
+    2. backups/*.sqlite — бэкапы БД в этой папке, от свежего к старому;
+    3. таблица contacts в MacroCRM — мастер-справочник, переживает удаление
+       записи из estate_deals_contacts, но не переживает слияние дублей.
+
+  ВНИМАНИЕ: backups/ исключена из git (.gitignore) и в Docker-образ не попадает.
+  В контейнере источник (1) обычно единственный полноценный — скопируйте туда
+  бэкап с рабочей машины:
+    docker cp backups/db_before_nc_migration_20260225_174029.sqlite \\
+              client-service-service:/tmp/donor.sqlite
 
   Рецидив закрыт в data_sync.py: клиенты, на которых ссылаются заявки, больше
   не удаляются при синхронизации.
 
 ИСПОЛЬЗОВАНИЕ
-  python fix_orphan_clients.py              # Dry-run (по умолчанию)
-  python fix_orphan_clients.py --apply      # Применить
-  python fix_orphan_clients.py --report     # Только отчёт по осиротевшим заявкам
+  python fix_orphan_clients.py                          # Dry-run (по умолчанию)
+  python fix_orphan_clients.py --donor /tmp/donor.sqlite
+  python fix_orphan_clients.py --donor /tmp/donor.sqlite --apply
+  python fix_orphan_clients.py --report                 # Только отчёт
 
 Бэкап базы создаётся автоматически перед изменениями в папку backups/.
+Скрипт идемпотентен: повторный запуск чинит только то, что осталось.
 """
 
 import argparse
@@ -108,12 +117,25 @@ def find_orphans():
 # ПОИСК ДАННЫХ КЛИЕНТА
 # ============================================================================
 
-def recover_from_backups(missing_ids):
-    """Ищет клиентов в локальных бэкапах, от самого свежего к старому."""
+def recover_from_donors(missing_ids, donors):
+    """Ищет клиентов в донорских БД: сначала явно указанные через --donor,
+    затем бэкапы из backups/ от самого свежего к старому.
+
+    Донор — любая копия app.db, где нужный клиент ещё присутствует
+    (бэкап до синхронизации, копия БД с другого стенда)."""
     found = {}
-    backups = sorted(glob.glob(os.path.join(BACKUP_DIR, '*.sqlite')), reverse=True)
+    explicit = []
+    for path in donors or []:
+        if os.path.exists(path):
+            explicit.append(path)
+        else:
+            print(f"  ! Донор не найден: {path}")
+
+    backups = explicit + sorted(glob.glob(os.path.join(BACKUP_DIR, '*.sqlite')), reverse=True)
     if not backups:
-        print("  - Бэкапов в backups/ не найдено.")
+        print("  - Донорских БД не задано, бэкапов в backups/ нет.")
+        print("    Папка backups/ в git не хранится (см. .gitignore) и в образ не попадает —")
+        print("    скопируйте бэкап в контейнер и укажите его через --donor.")
         return found
 
     for path in backups:
@@ -254,6 +276,9 @@ def main():
                         help='Применить изменения (по умолчанию dry-run)')
     parser.add_argument('--report', action='store_true',
                         help='Только отчёт, без поиска в источнике и без изменений')
+    parser.add_argument('--donor', action='append', metavar='PATH',
+                        help='Путь к донорской SQLite-БД, где клиент ещё есть '
+                             '(можно указать несколько раз). Проверяются раньше backups/.')
     args = parser.parse_args()
 
     app = create_app()
@@ -273,7 +298,7 @@ def main():
 
         print()
         print("=== ПОИСК ДАННЫХ КЛИЕНТОВ ===")
-        recovered = recover_from_backups(orphan_ids)
+        recovered = recover_from_donors(orphan_ids, args.donor)
         still_missing = [i for i in orphan_ids if i not in recovered]
         recovered.update(recover_from_source(still_missing))
 
@@ -283,8 +308,9 @@ def main():
         if unrecovered:
             print()
             print(f"  ! Без данных остались client_id: {unrecovered}")
-            print("    Их заявки продолжат показывать «N/A». Данных нет ни в бэкапах,")
-            print("    ни в мастер-справочнике MacroCRM.")
+            print("    Их заявки продолжат показывать «N/A»: данных нет ни в донорских БД,")
+            print("    ни в мастер-справочнике MacroCRM (клиент слит с дублем и удалён).")
+            print("    Найдите более старую копию app.db и передайте её через --donor.")
 
         if not args.apply:
             print()
