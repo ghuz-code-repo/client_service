@@ -15,3 +15,4 @@ instance/*
 
 *.sqlite-shm
 *.sqlite-wal
+*.sqlite

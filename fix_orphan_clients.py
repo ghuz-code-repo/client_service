@@ -45,7 +45,6 @@ import argparse
 import datetime
 import glob
 import os
-import shutil
 import sqlite3
 import sys
 
@@ -62,6 +61,7 @@ load_dotenv(os.path.join(BASE_DIR, '.env'))
 
 from app import create_app  # noqa: E402
 from app.extensions import db  # noqa: E402
+from backup_manager import resolve_db_path  # noqa: E402
 from config import Config  # noqa: E402
 from sqlalchemy import create_engine, text  # noqa: E402
 
@@ -71,27 +71,41 @@ from sqlalchemy import create_engine, text  # noqa: E402
 # ============================================================================
 
 def backup_database(app):
-    """Создаёт бэкап SQLite базы данных."""
-    db_uri = app.config.get('SQLALCHEMY_DATABASE_URI', '')
+    """Создаёт бэкап SQLite базы данных.
 
-    if db_uri.startswith('sqlite:///'):
-        db_path = db_uri.replace('sqlite:///', '')
-    else:
-        print(f"  ! Не SQLite БД ({db_uri}), бэкап пропущен")
-        return None
-
-    if not os.path.isabs(db_path):
-        db_path = os.path.join(app.instance_path, db_path)
-
-    if not os.path.exists(db_path):
-        print(f"  ! Файл БД не найден: {db_path}")
+    Через online-backup API SQLite, а не копированием файла: база работает
+    в режиме WAL, и часть закоммиченных транзакций может лежать в -wal,
+    которого обычный copy не захватит."""
+    db_path = resolve_db_path(app)
+    if not db_path:
+        print(f"  ! Не SQLite БД, бэкап пропущен")
         return None
 
     os.makedirs(BACKUP_DIR, exist_ok=True)
     timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
     backup_path = os.path.join(BACKUP_DIR, f"db_before_orphan_clients_{timestamp}.sqlite")
+    tmp_path = backup_path + '.tmp'
 
-    shutil.copy2(db_path, backup_path)
+    src = dst = None
+    try:
+        src = sqlite3.connect(db_path)
+        dst = sqlite3.connect(tmp_path)
+        with dst:
+            src.backup(dst)
+    except (sqlite3.Error, OSError) as e:
+        print(f"  ! Бэкап не создан: {e}")
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+        return None
+    finally:
+        for con in (dst, src):
+            if con is not None:
+                con.close()
+
+    os.replace(tmp_path, backup_path)
     size_mb = os.path.getsize(backup_path) / (1024 * 1024)
     print(f"  + Бэкап: {backup_path} ({size_mb:.1f} МБ)")
     return backup_path
@@ -131,7 +145,10 @@ def recover_from_donors(missing_ids, donors):
         else:
             print(f"  ! Донор не найден: {path}")
 
-    backups = explicit + sorted(glob.glob(os.path.join(BACKUP_DIR, '*.sqlite')), reverse=True)
+    # recursive: автоматические бэкапы разложены по подпапкам daily/weekly/monthly
+    auto = sorted(glob.glob(os.path.join(BACKUP_DIR, '**', '*.sqlite'), recursive=True),
+                  key=lambda p: os.path.getmtime(p), reverse=True)
+    backups = explicit + auto
     if not backups:
         print("  - Донорских БД не задано, бэкапов в backups/ нет.")
         print("    Папка backups/ в git не хранится (см. .gitignore) и в образ не попадает —")

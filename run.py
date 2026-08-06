@@ -18,6 +18,7 @@ sys.stderr.reconfigure(encoding='utf-8')
 load_dotenv()
 from app import create_app
 from data_sync import sync_data, create_database
+from backup_manager import start_backup_scheduler
 
 # Import service discovery and auth-connector
 try:
@@ -308,6 +309,10 @@ def initialize_app():
     sync_thread = threading.Thread(target=background_sync_task, args=(app.app_context(),))
     sync_thread.daemon = True  # Поток завершится при выходе из основного приложения
     sync_thread.start()
+
+    # 5. Ежедневный бэкап БД с ротацией (см. backup_manager.py)
+    print("\nЗапуск фонового процесса ежедневного бэкапа БД...")
+    start_backup_scheduler(app)
 
 # Initialize app when module is loaded (for Gunicorn)
 initialize_app()

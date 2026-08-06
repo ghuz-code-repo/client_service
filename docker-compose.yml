@@ -10,6 +10,7 @@ services:
       - "nginx.auth=true"  # Enable gateway authentication
     volumes:
       - ./instance:/app/instance
+      - ./backups:/app/backups          # Бэкапы БД должны пережить пересборку образа
       - ./app/word_templates:/app/app/word_templates
       - ./app/templates:/app/app/templates
     env_file:
