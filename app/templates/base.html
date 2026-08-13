@@ -53,7 +53,20 @@
         .card:hover { box-shadow: 0 0 40px rgba(var(--gh-gold-rgb), 0.3); transform: translateY(-5px); }
         .card-header, .card-footer { background-color: rgba(var(--card-bg-rgb), 0.3) !important; border-bottom: 1px solid rgba(var(--gh-gold-rgb), 0.2) !important; }
 
-        .navbar { border-bottom: 1px solid rgba(var(--gh-gold-rgb), 0.4); background: linear-gradient(135deg, rgba(var(--card-bg-rgb), 0.5), rgba(var(--card-bg-rgb), 0.3)) !important; backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); position: sticky; top: 0; z-index: 1030; }
+        .navbar { border-bottom: 1px solid rgba(var(--gh-gold-rgb), 0.4); background: linear-gradient(135deg, rgba(var(--card-bg-rgb), 0.5), rgba(var(--card-bg-rgb), 0.3)) !important; backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); position: sticky; top: 0; z-index: 1030; padding-top: .3rem; padding-bottom: .3rem; }
+
+        /* Шапка: логотип ведёт в меню сервисов, название — на главную сервиса.
+           Разные адресаты, поэтому у каждой половины свой отклик на наведение. */
+        .brand-logo-img { height: 26px; width: auto; display: block; }
+        .brand-logo { display: inline-flex; transition: opacity .2s ease, transform .2s ease; }
+        .brand-logo:hover { opacity: .75; transform: translateY(-1px); }
+        .brand-name { font-weight: 700; font-size: 1rem; line-height: 1; white-space: nowrap; color: var(--gh-gold); text-decoration: none; border-bottom: 1px solid transparent; transition: border-color .2s ease; }
+        .brand-name:hover { border-bottom-color: var(--gh-gold); }
+        /* Пункты меню не должны ломаться на две строки: это и растит шапку. */
+        .navbar .nav-link { white-space: nowrap; padding-top: .25rem; padding-bottom: .25rem; }
+        .header-user { display: inline-flex; align-items: center; gap: .35rem; }
+        .header-user-name { max-width: 14ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        @media (max-width: 991.98px) { .header-user-name { display: none; } }
 
         /* --- СТИЛИ ДЛЯ ВЫДВИЖНОЙ ПАНЕЛИ С ПЛАВНОЙ АНИМАЦИЕЙ --- */
         .sub-nav-wrapper {
@@ -142,15 +155,22 @@
 
     <header>
         <nav class="navbar navbar-expand-lg">
-            <div class="container">
-                <a class="navbar-brand" href="{{ url_for('main.index') if gateway_is_authenticated() else url_for('auth.login') }}">
-                    <img src="{{ url_for('static', filename='logo.svg') }}" alt="Golden House Logo" height="40" class="d-inline-block align-text-top">
-                </a>
+            <div class="container-fluid px-3 px-xl-4">
+                {# Логотип и название ведут в РАЗНЫЕ места: логотип — в общее меню
+                   сервисов gateway, название — на главную этого сервиса. #}
+                <div class="navbar-brand d-flex align-items-center gap-2 me-3 mb-0 p-0">
+                    <a class="brand-logo" href="/menu" title="К меню сервисов" aria-label="К меню сервисов">
+                        <img src="{{ url_for('static', filename='logo.svg') }}" alt="Golden House" class="brand-logo-img">
+                    </a>
+                    <a class="brand-name" href="{{ url_for('main.index') if gateway_is_authenticated() else url_for('auth.login') }}"
+                       title="На главную сервиса">Клиентский сервис</a>
+                </div>
                 <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
                     <span class="navbar-toggler-icon"></span>
                 </button>
                 <div class="collapse navbar-collapse" id="navbarNav">
-                    <ul class="navbar-nav me-auto mb-2 mb-lg-0">
+                    {# mx-auto — меню по центру шапки, слева бренд, справа действия. #}
+                    <ul class="navbar-nav mx-auto mb-2 mb-lg-0">
                         {% if gateway_is_authenticated() %}
                             <li class="nav-item"><a class="nav-link {% if request.endpoint == 'main.index' %}active{% endif %}" href="{{ url_for('main.index') }}">Клиенты</a></li>
                             <li class="nav-item"><a class="nav-link {% if request.endpoint == 'main.applications' %}active{% endif %}" href="{{ url_for('main.applications') }}">Заявки</a></li>
@@ -182,19 +202,22 @@
                             </a>
                         </li>
                         {% if gateway_is_authenticated() %}
-                            <li class="nav-item dropdown">
-                                <a class="nav-link dropdown-toggle d-flex align-items-center" href="#" id="navbarUserDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                            {# Вместо выпадающего меню — прямые кнопки, как в gateway. #}
+                            <li class="nav-item">
+                                <a class="btn btn-outline-secondary btn-sm header-user" href="/profile" title="Личный кабинет">
                                     {% set avatar_url = gateway_avatar_url() %}
                                     {% if avatar_url %}
-                                        <img src="{{ avatar_url }}" alt="{{ gateway_username() }}" class="rounded-circle me-2" width="32" height="32" style="object-fit: cover;">
+                                        <img src="{{ avatar_url }}" alt="" class="rounded-circle" width="20" height="20" style="object-fit: cover;">
                                     {% else %}
-                                        <i class="bi bi-person-circle me-2"></i>
+                                        <i class="bi bi-person-circle"></i>
                                     {% endif %}
-                                    <span>{{ gateway_full_name() or gateway_username() }}</span>
+                                    <span class="header-user-name">{{ gateway_full_name() or gateway_username() }}</span>
                                 </a>
-                                <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="navbarUserDropdown">
-                                    <li><a class="dropdown-item" href="{{ url_for('auth.logout') }}">Выйти</a></li>
-                                </ul>
+                            </li>
+                            <li class="nav-item ms-2">
+                                <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('auth.logout') }}" title="Выйти" aria-label="Выйти">
+                                    <i class="bi bi-box-arrow-right"></i>
+                                </a>
                             </li>
                         {% else %}
                             <li class="nav-item"><a class="nav-link" href="{{ url_for('auth.login') }}">Войти</a></li>
