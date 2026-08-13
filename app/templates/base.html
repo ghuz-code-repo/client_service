@@ -116,14 +116,13 @@
         }
         .gh-header { min-height: var(--gh-header-min-height); }
         .gh-brand { display: flex; align-items: center; gap: 10px; }
-        .gh-brand-logo { display: inline-flex; border-radius: 4px; transition: opacity .2s ease, transform .2s ease; }
-        .gh-brand-logo:hover { opacity: .75; transform: translateY(-1px); }
+        .gh-brand-logo { display: inline-flex; border-radius: 4px; transition: transform 0.2s ease, box-shadow 0.2s ease; }
+        .gh-brand-logo:hover { transform: translateY(-1px); box-shadow: 0 0 10px 2px rgba(var(--gh-brand-gold-rgb), 0.55); }
         .gh-brand-logo-img { height: 28px; width: auto; display: block; }
-        .gh-brand-name { font-family: 'Montserrat', sans-serif;
-        .gh-brand-name { font-size: 1rem; font-weight: 700; line-height: 1; white-space: nowrap; color: var(--gh-brand-gold); text-decoration: none; border-bottom: 1px solid transparent; display: inline-block; transition: border-color .2s ease, transform .2s ease, box-shadow .2s ease; }
+        .gh-brand-name { font-family: 'Montserrat', sans-serif; font-size: 1rem; font-weight: 700; line-height: 1; white-space: nowrap; color: var(--gh-brand-gold); text-decoration: none; border-bottom: 1px solid transparent; display: inline-block; transition: border-color .2s ease, transform .2s ease, box-shadow .2s ease; }
         .gh-brand-name:hover { color: var(--gh-brand-gold); border-bottom-color: currentColor; transform: translateY(-1px); box-shadow: 0 6px 14px -6px rgba(var(--gh-brand-gold-rgb), 0.9); }
         .gh-brand-link { text-decoration: none; }
-        .gh-brand-link:hover .gh-brand-logo-img { opacity: .75; }
+        .gh-brand-link:hover .gh-brand-logo-img { box-shadow: 0 0 10px 2px rgba(var(--gh-brand-gold-rgb), 0.55); }
         .gh-brand-link:hover .gh-brand-name { border-bottom-color: currentColor; transform: translateY(-1px); box-shadow: 0 6px 14px -6px rgba(var(--gh-brand-gold-rgb), 0.9); }
         .gh-header-actions { display: flex; align-items: center; gap: 8px; }
         .gh-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 32px; padding: 4px 10px; font-size: .875rem; line-height: 1; color: inherit; background: transparent; border: 1px solid currentColor; border-radius: 6px; opacity: .7; cursor: pointer; text-decoration: none; transition: opacity .2s ease, color .2s ease; }
