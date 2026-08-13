@@ -159,8 +159,10 @@
                 {# Логотип и название ведут в РАЗНЫЕ места: логотип — в общее меню
                    сервисов gateway, название — на главную этого сервиса. #}
                 <div class="navbar-brand d-flex align-items-center gap-2 me-3 mb-0 p-0">
+                    {# Только герб, без словесной части: она дублировала бы
+                       название сервиса рядом. Герб золотой в обеих темах. #}
                     <a class="brand-logo" href="/menu" title="К меню сервисов" aria-label="К меню сервисов">
-                        <img src="{{ url_for('static', filename='logo.svg') }}" alt="Golden House" class="brand-logo-img">
+                        <img src="{{ url_for('static', filename='logo-mark.svg') }}" alt="Golden House" class="brand-logo-img">
                     </a>
                     <a class="brand-name" href="{{ url_for('main.index') if gateway_is_authenticated() else url_for('auth.login') }}"
                        title="На главную сервиса">Клиентский сервис</a>
