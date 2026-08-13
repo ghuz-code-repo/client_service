@@ -119,10 +119,9 @@
         .gh-brand-logo { display: inline-flex; border-radius: 4px; transition: transform 0.2s ease, box-shadow 0.2s ease; }
         .gh-brand-logo:hover { transform: translateY(-1px); box-shadow: 0 0 10px 2px rgba(var(--gh-brand-gold-rgb), 0.55); }
         .gh-brand-logo-img { height: 28px; width: auto; display: block; }
-        /* Кегль привязан к гербу: у Montserrat заглавная = 0.7 кегля
-           (sCapHeight 700 / upm 1000), видимая часть герба при height 28px
-           равна 26.8px, отсюда 38px. Меняешь высоту герба — пересчитай. */
-        .gh-brand-name { font-family: 'Montserrat', sans-serif; font-size: 38px; text-transform: uppercase; font-weight: 700; line-height: 1; white-space: nowrap; color: var(--gh-brand-gold); text-decoration: none; border-bottom: 1px solid transparent; display: inline-block; transition: border-color .2s ease, transform .2s ease, box-shadow .2s ease; }
+        /* Кегль 24px: у Montserrat заглавная = 0.7 кегля (sCapHeight 700 /
+           upm 1000), то есть 16.8px при высоте герба 28px. */
+        .gh-brand-name { font-family: 'Montserrat', sans-serif; font-size: 24px; font-weight: 700; line-height: 1; white-space: nowrap; color: var(--gh-brand-gold); text-decoration: none; border-bottom: 1px solid transparent; display: inline-block; transition: border-color .2s ease, transform .2s ease, box-shadow .2s ease; }
         .gh-brand-name:hover { color: var(--gh-brand-gold); border-bottom-color: currentColor; transform: translateY(-1px); box-shadow: 0 6px 14px -6px rgba(var(--gh-brand-gold-rgb), 0.9); }
         .gh-brand-link { text-decoration: none; }
         .gh-brand-link:hover .gh-brand-logo-img { box-shadow: 0 0 10px 2px rgba(var(--gh-brand-gold-rgb), 0.55); }
@@ -132,10 +131,9 @@
         .gh-btn:hover { opacity: 1; color: var(--gh-brand-gold); }
         .gh-user-name { max-width: 14ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         @media (max-width: 991.98px) { .gh-user-name { display: none; } }
-        /* Верхний регистр делает длинные названия широкими; на средних
-   экранах уменьшаем, иначе бренд поджимает центральное меню. */
-@media (max-width: 1399.98px) { .gh-brand-name { font-size: 28px; } }
-@media (max-width: 1199.98px) { .gh-brand-name { font-size: 22px; } }
+        /* На средних экранах уменьшаем, иначе длинное название
+   поджимает центральное меню. */
+@media (max-width: 1199.98px) { .gh-brand-name { font-size: 20px; } }
 /* gh-brand-name-compact */
 /* ═══ КОНЕЦ ЕДИНОГО БЛОКА ШАПКИ ══════════════════════════════════ */
 
