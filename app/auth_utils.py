@@ -194,6 +194,25 @@ def get_current_full_name():
     return g.get('username', '')
 
 
+def get_current_short_name():
+    """
+    Возвращает имя в виде «Фамилия И. О.» — так подписан пользователь в шапке
+    gateway, и шапки сервисов должны выглядеть так же.
+
+    Returns:
+        str: Сокращённое имя, либо полное/username, если сократить не из чего
+    """
+    short = g.get('short_name', '')
+    if short:
+        return short
+
+    parts = (get_current_full_name() or '').split()
+    if len(parts) >= 2:
+        initials = ' '.join(p[0].upper() + '.' for p in parts[1:3])
+        return f'{parts[0]} {initials}'
+    return get_current_full_name()
+
+
 def get_user_avatar_url():
     """
     Возвращает URL аватарки пользователя из Gateway.

@@ -140,9 +140,10 @@ def create_app(config_class=Config):
     def inject_gateway_auth():
         """Добавляет функции Gateway auth в контекст всех шаблонов"""
         from .auth_utils import (
-            is_authenticated, 
+            is_authenticated,
             get_current_username,
             get_current_full_name,
+            get_current_short_name,
             get_user_avatar_url,
             is_admin as gateway_is_admin_func, 
             has_permission,
@@ -153,6 +154,7 @@ def create_app(config_class=Config):
             'gateway_is_authenticated': is_authenticated,
             'gateway_username': get_current_username,
             'gateway_full_name': get_current_full_name,
+            'gateway_short_name': get_current_short_name,
             'gateway_avatar_url': get_user_avatar_url,
             'gateway_is_admin': gateway_is_admin_func,
             'gateway_has_permission': has_permission,

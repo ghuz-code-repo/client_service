@@ -121,20 +121,76 @@
         .gh-brand-logo-img { height: 28px; width: auto; display: block; }
         /* Кегль 24px: у Montserrat заглавная = 0.7 кегля (sCapHeight 700 /
            upm 1000), то есть 16.8px при высоте герба 28px. */
-        .gh-brand-name { font-family: 'Montserrat', sans-serif; font-size: 24px; font-weight: 700; line-height: 1; white-space: nowrap; color: var(--gh-brand-gold); text-decoration: none; border-bottom: 1px solid transparent; display: inline-block; transition: border-color .2s ease, transform .2s ease, box-shadow .2s ease; }
+        .gh-brand-name { font-family: 'Montserrat', sans-serif; font-size: 24px; font-weight: 700; line-height: 1; white-space: nowrap; color: var(--gh-brand-gold); text-decoration: none; border-bottom: 1px solid transparent; display: inline-block; transition: border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease; }
         .gh-brand-name:hover { color: var(--gh-brand-gold); border-bottom-color: currentColor; transform: translateY(-1px); box-shadow: 0 6px 14px -6px rgba(var(--gh-brand-gold-rgb), 0.9); }
         .gh-brand-link { text-decoration: none; }
         .gh-brand-link:hover .gh-brand-logo-img { box-shadow: 0 0 10px 2px rgba(var(--gh-brand-gold-rgb), 0.55); }
         .gh-brand-link:hover .gh-brand-name { border-bottom-color: currentColor; transform: translateY(-1px); box-shadow: 0 6px 14px -6px rgba(var(--gh-brand-gold-rgb), 0.9); }
         .gh-header-actions { display: flex; align-items: center; gap: 8px; }
-        .gh-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 32px; padding: 4px 10px; font-size: .875rem; line-height: 1; color: inherit; background: transparent; border: 1px solid currentColor; border-radius: 6px; opacity: .7; cursor: pointer; text-decoration: none; transition: opacity .2s ease, color .2s ease; }
-        .gh-btn:hover { opacity: 1; color: var(--gh-brand-gold); }
-        .gh-user-name { max-width: 14ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        @media (max-width: 991.98px) { .gh-user-name { display: none; } }
+        .gh-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            min-height: 36px;
+            padding: 8px 12px;
+            font-size: 14px;
+            font-weight: bold;
+            line-height: 1;
+            text-align: center;
+            color: var(--gh-brand-gold);
+            background: transparent;
+            border: 2px solid var(--gh-brand-gold);
+            border-radius: 6px;
+            cursor: pointer;
+            text-decoration: none;
+            transition: background-color 0.2s, color 0.2s, border-color 0.2s, transform 0.1s;
+        }
+        .gh-btn:hover {
+            background-color: var(--gh-brand-gold);
+            color: #1f1a12;
+            transform: scale(1.05);
+        }
         /* На средних экранах уменьшаем, иначе длинное название
    поджимает центральное меню. */
 @media (max-width: 1199.98px) { .gh-brand-name { font-size: 20px; } }
 /* gh-brand-name-compact */
+        /* Блок пользователя — копия шапки gateway: аватар, «Фамилия И. О.»,
+           логин в скобках, справа кнопки с золотой рамкой. Кнопка выхода есть
+           только в gateway, в сервисах её нет. */
+        .gh-user {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 2px 8px 2px 2px;
+            border-radius: 5px;
+            text-decoration: none;
+            font-weight: bold;
+            color: var(--gh-brand-gold);
+            background: rgba(var(--gh-brand-gold-rgb), 0.07);
+            transition: background 0.2s ease;
+        }
+        .gh-user:hover { background: rgba(var(--gh-brand-gold-rgb), 0.18); color: var(--gh-brand-gold); }
+        .gh-avatar {
+            flex: none;
+            height: 36px;
+            width: 36px;
+            border-radius: 50%;
+            overflow: hidden;
+            border: 1px solid var(--gh-brand-gold);
+            background: rgba(var(--gh-brand-gold-rgb), 0.12);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+        }
+        .gh-avatar img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
+        .gh-user-info { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+        .gh-user-fullname { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .gh-user-login { font-size: 13px; font-weight: normal; opacity: 0.75; white-space: nowrap; }
+        /* На узких экранах остаётся только аватар — подпись съедала бы всю шапку. */
+        @media (max-width: 991.98px) { .gh-user-info { display: none; } }
+
 /* ═══ КОНЕЦ ЕДИНОГО БЛОКА ШАПКИ ══════════════════════════════════ */
 
         /* Пункты меню не должны ломаться на две строки: это и растит шапку. */
@@ -271,21 +327,29 @@
                     {# Единый для всех сервисов набор действий: тема и пользователь.
                        «Выход» живёт только в gateway, «Меню сервисов» — на гербе. #}
                     <div class="gh-header-actions">
+                        {# Блок пользователя — как в gateway: аватар, «Фамилия И. О.»
+                           и логин в скобках. Кнопки выхода здесь нет. #}
+                        {% if gateway_is_authenticated() %}
+                            <a class="gh-user" href="/profile" title="Личный кабинет">
+                                <span class="gh-avatar">
+                                    {% set avatar_url = gateway_avatar_url() %}
+                                    {% if avatar_url %}
+                                        <img src="{{ avatar_url }}" alt="">
+                                    {% else %}
+                                        <i class="bi bi-person-circle"></i>
+                                    {% endif %}
+                                </span>
+                                <span class="gh-user-info">
+                                    <span class="gh-user-fullname">{{ gateway_short_name() }}</span>
+                                    <span class="gh-user-login">({{ gateway_username() }})</span>
+                                </span>
+                            </a>
+                        {% endif %}
                         <a id="theme-switcher" class="gh-btn" title="Сменить тему" role="button">
                             <i class="bi bi-moon-stars-fill"></i>
                             <i class="bi bi-sun-fill"></i>
                         </a>
-                        {% if gateway_is_authenticated() %}
-                            <a class="gh-btn" href="/profile" title="Личный кабинет">
-                                {% set avatar_url = gateway_avatar_url() %}
-                                {% if avatar_url %}
-                                    <img src="{{ avatar_url }}" alt="" class="rounded-circle" width="20" height="20" style="object-fit: cover;">
-                                {% else %}
-                                    <i class="bi bi-person-circle"></i>
-                                {% endif %}
-                                <span class="gh-user-name">{{ gateway_full_name() or gateway_username() }}</span>
-                            </a>
-                        {% else %}
+                        {% if not gateway_is_authenticated() %}
                             <a class="gh-btn" href="{{ url_for('auth.login') }}">Войти</a>
                         {% endif %}
                     </div>
