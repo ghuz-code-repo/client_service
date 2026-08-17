@@ -3,6 +3,12 @@
 """
 
 from flask import g
+
+# Общая для флота проверка права: точное совпадение, голая '*' и префиксные
+# шаблоны вида 'client-service.*'. Шлюз отдаёт wildcard-право строкой как есть,
+# и точное сравнение его не видело.
+from auth_connector.permission_utils import any_permission_granted, permission_granted
+
 from app.models import User
 from app.extensions import db
 import logging
@@ -93,9 +99,10 @@ def _determine_role_from_permissions():
     permissions = g.get('service_permissions', [])
     roles = g.get('service_roles', [])
     
-    # Системный админ или админ сервиса
-    # Проверяем как полное имя роли 'client-service-admin', так и короткое 'admin'
-    if g.get('is_admin') or 'client-service-admin' in roles or 'admin' in roles:
+    # Админ сервиса. Флаг g.is_admin убран вместе с заголовком X-User-Admin;
+    # роль admin здесь оставлена намеренно — это отображаемое название роли в
+    # интерфейсе, а не проверка доступа.
+    if 'client-service-admin' in roles or 'admin' in roles:
         return 'Админ'
     
     # Менеджер
@@ -116,39 +123,27 @@ def _determine_role_from_permissions():
 def has_permission(permission_name):
     """
     Проверяет наличие разрешения у текущего пользователя.
-    
+
     Args:
         permission_name (str): Название разрешения
-        
+
     Returns:
         bool: True если разрешение есть
     """
-    permissions = g.get('service_permissions', [])
-    return permission_name in permissions
+    return permission_granted(permission_name, g.get('service_permissions', []))
 
 
 def has_any_permission(*permission_names):
     """
     Проверяет наличие хотя бы одного из указанных разрешений у текущего пользователя.
-    
+
     Args:
         *permission_names: Названия разрешений для проверки
-        
+
     Returns:
         bool: True если есть хотя бы одно из разрешений
     """
-    permissions = g.get('service_permissions', [])
-    return any(perm in permissions for perm in permission_names)
-
-
-def is_admin():
-    """
-    Проверяет, является ли пользователь администратором.
-    
-    Returns:
-        bool: True если администратор
-    """
-    return g.get('is_admin', False) or 'client-service-admin' in g.get('service_roles', [])
+    return any_permission_granted(permission_names, g.get('service_permissions', []))
 
 
 def is_authenticated():
@@ -239,11 +234,8 @@ def has_role(*role_names):
     Returns:
         bool: True если пользователь имеет хотя бы одну из указанных ролей
     """
-    # Проверяем системного админа
-    if g.get('is_admin', False):
-        return True
-    
-    # Определяем роль пользователя на основе разрешений
+    # Ветки «системный админ проходит всегда» здесь нет: она читала g.is_admin,
+    # который заполнялся из отменённого заголовка X-User-Admin.
     current_role = _determine_role_from_permissions()
     
     # Проверяем совпадение с любой из переданных ролей

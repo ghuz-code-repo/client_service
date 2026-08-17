@@ -112,9 +112,9 @@ def create_app(config_class=Config):
         else:
             g.full_name = encoded_name
         
-        # Флаг администратора
-        g.is_admin = request.headers.get('X-User-Admin', 'false').lower() == 'true'
-        
+        # Флага администратора здесь больше нет: шлюз не шлёт X-User-Admin, а
+        # сервисы делали на нём ранний выход до сравнения прав. Полный доступ
+        # приезжает правом 'client-service.*' в списке разрешений ниже.
         # Роли и разрешения для сервиса
         service_roles = request.headers.get('X-User-Service-Roles', '')
         g.service_roles = [r.strip() for r in service_roles.split(',') if r.strip()]

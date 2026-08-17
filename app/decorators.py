@@ -1,7 +1,13 @@
 # app/decorators.py
 from functools import wraps
 from flask import g, abort
-from app.auth_utils import is_admin as gateway_is_admin, has_permission, has_any_permission
+from app.auth_utils import has_permission, has_any_permission
+
+# Право, заменившее прежний обход «админы проходят всегда». Тот обход держался
+# на заголовке X-User-Admin и имени роли, то есть решал доступ мимо auth-service.
+# Администратору выдаётся роль admin с правом 'client-service.*', которое
+# покрывает и эту строку тоже.
+ADMIN_PERMISSION = 'client-service.admin.panel'
 
 
 def auth_required(permission=None, any_of=None):
@@ -17,10 +23,6 @@ def auth_required(permission=None, any_of=None):
         def decorated_function(*args, **kwargs):
             if not g.get('auth_user_id'):
                 abort(401)
-            
-            # Админы проходят всегда
-            if gateway_is_admin():
-                return f(*args, **kwargs)
             
             # Проверяем разрешение если указано
             if permission and not has_permission(permission):
@@ -50,7 +52,7 @@ def admin_required(f):
     def decorated_function(*args, **kwargs):
         if not g.get('auth_user_id'):
             abort(401)
-        if not gateway_is_admin():
+        if not has_permission(ADMIN_PERMISSION):
             abort(403)
         return f(*args, **kwargs)
     
@@ -68,10 +70,6 @@ def permission_required(*required_permissions):
         def decorated_function(*args, **kwargs):
             if not g.get('auth_user_id'):
                 abort(401)
-            
-            # Админы проходят всегда
-            if gateway_is_admin():
-                return f(*args, **kwargs)
             
             # Проверяем хотя бы одно из указанных разрешений
             if not has_any_permission(*required_permissions):
