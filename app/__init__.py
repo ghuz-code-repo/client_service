@@ -145,18 +145,20 @@ def create_app(config_class=Config):
             get_current_full_name,
             get_current_short_name,
             get_user_avatar_url,
-            is_admin as gateway_is_admin_func, 
             has_permission,
             has_role,
         )
-        
+
+        # gateway_is_admin из контекста убрана вместе с auth_utils.is_admin:
+        # она читала заголовок X-User-Admin, которого шлюз больше не шлёт.
+        # В шаблонах не использовалась. Права проверяются через
+        # gateway_has_permission — wildcard 'client-service.*' её покрывает.
         return {
             'gateway_is_authenticated': is_authenticated,
             'gateway_username': get_current_username,
             'gateway_full_name': get_current_full_name,
             'gateway_short_name': get_current_short_name,
             'gateway_avatar_url': get_user_avatar_url,
-            'gateway_is_admin': gateway_is_admin_func,
             'gateway_has_permission': has_permission,
             'gateway_has_role': has_role,
         }
