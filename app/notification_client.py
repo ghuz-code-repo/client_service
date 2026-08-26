@@ -27,16 +27,48 @@ class NotificationServiceClient:
             headers['X-API-Key'] = self.api_key
         return headers
     
-    def send_email(self, recipient: str, subject: str, content: str, 
+    @staticmethod
+    def _recipient_fields(login: Optional[str] = None,
+                          external_recipient: Optional[str] = None,
+                          recipient: Optional[str] = None) -> dict:
+        """
+        Собрать поля адресации для notification-service.
+
+        Сотрудника адресуем логином портала — адрес доставки определяет auth-service.
+        Получателю вне портала нужен external_recipient. Заполнено ровно одно поле.
+
+        Raises:
+            ValueError: если заполнено не одно поле
+        """
+        if sum(1 for v in (login, external_recipient, recipient) if v) != 1:
+            raise ValueError(
+                "Нужно ровно одно поле получателя: login, external_recipient или recipient"
+            )
+        if login:
+            return {"login": login}
+        if external_recipient:
+            return {"external_recipient": external_recipient}
+        logger.warning(
+            "Уведомление отправлено через устаревшее поле recipient=%s — "
+            "переведите вызов на login или external_recipient", recipient
+        )
+        return {"recipient": recipient}
+
+    def send_email(self, subject: str, content: str,
+                   login: Optional[str] = None,
+                   external_recipient: Optional[str] = None,
+                   recipient: Optional[str] = None,
                    attachment_filename: Optional[str] = None,
                    attachment_content: Optional[bytes] = None) -> dict:
         """
         Отправляет email через notification-service
         
         Args:
-            recipient: Email получателя
             subject: Тема письма
             content: Текст письма
+            login: Логин получателя на портале (предпочтительно)
+            external_recipient: Email получателя вне портала
+            recipient: УСТАРЕЛО — сырой email; оставлено для совместимости
             attachment_filename: Имя файла вложения (опционально)
             attachment_content: Содержимое файла в байтах (опционально)
             
@@ -45,17 +77,20 @@ class NotificationServiceClient:
             
         Raises:
             requests.RequestException: При ошибке отправки
+            ValueError: При некорректной адресации
         """
         try:
             # Формируем тело письма
             email_body = content
+            addressing = self._recipient_fields(login, external_recipient, recipient)
+            target = login or external_recipient or recipient
             
             # Формируем запрос
             payload = {
                 "type": "email",
-                "recipient": recipient,
                 "subject": subject,
-                "content": email_body
+                "content": email_body,
+                **addressing,
             }
             
             # Добавляем вложение если есть
@@ -66,7 +101,7 @@ class NotificationServiceClient:
                 payload["attachment_content"] = attachment_base64
                 logger.info(f"Добавлено вложение: {attachment_filename} ({len(attachment_content)} bytes)")
             
-            logger.info(f"Отправка email через notification-service: {recipient}, тема: {subject}")
+            logger.info(f"Отправка email через notification-service: {target}, тема: {subject}")
             
             # Отправляем запрос
             response = requests.post(
@@ -95,7 +130,7 @@ class NotificationServiceClient:
                 [
                     {
                         "type": "email",
-                        "recipient": "user@example.com",
+                        "login": "ivanov",   # или "external_recipient": "client@mail.ru"
                         "subject": "Тема",
                         "content": "Текст"
                     },
@@ -103,7 +138,9 @@ class NotificationServiceClient:
                 ]
                 
         Returns:
-            dict: Ответ от notification-service с информацией о батче
+            dict: Ответ от notification-service с информацией о батче.
+                  Получатели, которых не удалось разрешить, приходят списком
+                  в поле unresolved и создаются сразу со статусом failed.
         """
         try:
             payload = {
@@ -122,6 +159,11 @@ class NotificationServiceClient:
             response.raise_for_status()
             result = response.json()
             
+            unresolved = result.get('unresolved') or []
+            if unresolved:
+                logger.warning(
+                    f"Батч отправлен, но {len(unresolved)} получателей не разрешены: {unresolved}"
+                )
             logger.info(f"Батч уведомлений отправлен. Batch ID: {result.get('batch_id')}")
             return result
             

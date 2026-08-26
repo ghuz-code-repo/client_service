@@ -7,6 +7,7 @@ from docxtpl import DocxTemplate
 from .extensions import db
 from .models import Application, EstateDeals, EstateSells, EmailLog, ApplicationType
 from .notification_client import notification_client
+from .auth_utils import get_gateway_user_login
 import logging
 
 logger = logging.getLogger(__name__)
@@ -106,22 +107,30 @@ def generate_and_send_email(application_id):
         email_body += f"Комментарий: {app_obj.comment}\n\n"
         email_body += "Подробности в прикрепленном файле."
 
-        log_entry.recipient = responsible.email
+        # Ответственный — сотрудник портала: адресуем логином, адрес доставки
+        # подставит auth-service. Локальный email остаётся запасным вариантом
+        # для карточек, не связанных с учёткой портала.
+        responsible_login = get_gateway_user_login(responsible.gateway_user_id) if responsible else None
+        addressing = ({'login': responsible_login} if responsible_login
+                      else {'external_recipient': responsible.email})
+        target = responsible_login or responsible.email
+
+        log_entry.recipient = target
         log_entry.subject = subject_str
 
         # Отправляем через notification-service
         try:
             result = notification_client.send_email(
-                recipient=responsible.email,
                 subject=subject_str,
                 content=email_body,
                 attachment_filename=f"Application_{app_obj.id}.docx",
-                attachment_content=doc_io.read()
+                attachment_content=doc_io.read(),
+                **addressing
             )
             
             log_entry.status = 'Success'
             log_entry.server_response = f"Notification ID: {result.get('id', 'N/A')}"
-            logger.info(f"Email для заявки #{application_id} успешно отправлен на {responsible.email}")
+            logger.info(f"Email для заявки #{application_id} успешно отправлен на {target}")
             
         except Exception as send_error:
             raise Exception(f"Ошибка отправки через notification-service: {send_error}")

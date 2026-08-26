@@ -306,3 +306,57 @@ def get_gateway_users():
     except Exception as e:
         logger.error(f"Error getting users from Gateway: {e}")
         return []
+
+
+# Кэш «gateway_user_id -> логин портала»: логин у пользователя меняется редко,
+# а уведомления шлются пачками по одним и тем же ответственным
+_login_cache = {}
+
+
+def get_gateway_user_login(gateway_user_id):
+    """
+    Получить логин пользователя портала по его Gateway User ID.
+
+    Нужен для адресации уведомлений: notification-service принимает логин, а адрес
+    доставки (email, telegram) определяет auth-service.
+
+    Args:
+        gateway_user_id (str): MongoDB ObjectID пользователя в auth-service
+
+    Returns:
+        str | None: логин портала либо None, если пользователь не найден
+    """
+    import requests
+    import os
+
+    if not gateway_user_id:
+        return None
+
+    if gateway_user_id in _login_cache:
+        return _login_cache[gateway_user_id]
+
+    try:
+        gateway_url = os.getenv('AUTH_SERVICE_URL', 'http://auth-service:80')
+        api_key = os.getenv('INTERNAL_API_KEY', '')
+        headers = {'X-API-Key': api_key} if api_key else {}
+
+        response = requests.get(
+            f"{gateway_url}/api/users/{gateway_user_id}/profile",
+            headers=headers,
+            timeout=5
+        )
+
+        if response.status_code != 200:
+            logger.warning(
+                f"Failed to get profile for gateway user {gateway_user_id}: {response.status_code}"
+            )
+            return None
+
+        login = (response.json() or {}).get('username') or None
+        if login:
+            _login_cache[gateway_user_id] = login
+        return login
+
+    except Exception as e:
+        logger.error(f"Error getting login for gateway user {gateway_user_id}: {e}")
+        return None
