@@ -12,6 +12,44 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Куда уходит письмо, если ответственного не удалось связать с учёткой портала.
+# Терять заявку нельзя, а слать на локальный email в обход auth-service — значит
+# годами не замечать, что справочник разъехался с порталом.
+DEFAULT_INCIDENT_RECIPIENT = 'robot@gh.uz'
+
+
+def _unlinked_reason(responsible):
+    """
+    Человекочитаемая причина, почему у ответственного нет логина портала.
+
+    Returns:
+        str: причина для письма-инцидента
+    """
+    if not responsible:
+        return 'ответственный по заявке не назначен'
+    if not responsible.gateway_user_id:
+        return 'в справочнике ответственных не выбран пользователь портала'
+    return (f'auth-service не вернул логин по gateway_user_id={responsible.gateway_user_id} '
+            f'(учётка удалена или сервис недоступен)')
+
+
+def _incident_body(app_obj, responsible, reason, original_body):
+    """Тело письма-инцидента: данные для ручной досылки и для починки справочника."""
+    return (
+        '⚠ Письмо перенаправлено на служебный ящик.' + NL + NL +
+        'Адрес доставки определить не удалось, поэтому заявка не ушла ответственному.' + NL + NL +
+        f'Причина: {reason}' + NL + NL +
+        f'Заявка: №{app_obj.id} ({app_obj.application_type})' + NL +
+        f'Договор: {app_obj.agreement_number}' + NL +
+        f'Ответственный в справочнике: {responsible.full_name if responsible else "не назначен"}' + NL +
+        f'Email в справочнике: {(responsible.email if responsible else None) or "не указан"}' + NL +
+        f'Gateway User ID: {(responsible.gateway_user_id if responsible else None) or "не заполнен"}' + NL + NL +
+        'Что сделать: открыть раздел «Ответственные лица», выбрать для этого сотрудника '
+        'пользователя портала, после чего переслать вложение адресату вручную.' + NL + NL +
+        '--- Исходное письмо ---' + NL + NL +
+        original_body
+    )
+
 
 def generate_and_send_email(application_id):
     """
@@ -108,12 +146,27 @@ def generate_and_send_email(application_id):
         email_body += "Подробности в прикрепленном файле."
 
         # Ответственный — сотрудник портала: адресуем логином, адрес доставки
-        # подставит auth-service. Локальный email остаётся запасным вариантом
-        # для карточек, не связанных с учёткой портала.
+        # подставит auth-service.
         responsible_login = get_gateway_user_login(responsible.gateway_user_id) if responsible else None
-        addressing = ({'login': responsible_login} if responsible_login
-                      else {'external_recipient': responsible.email})
-        target = responsible_login or responsible.email
+
+        if responsible_login:
+            addressing = {'login': responsible_login}
+            target = responsible_login
+            success_status = 'Success'
+        else:
+            # Привязки нет — на локальный email не откатываемся: письмо ушло бы мимо
+            # портала и молча, а справочник так и остался бы сломанным. Отправляем
+            # на служебный ящик с данными инцидента, вложение сохраняем — по нему
+            # заявку можно дослать руками.
+            reason = _unlinked_reason(responsible)
+            target = os.getenv('UNLINKED_RESPONSIBLE_EMAIL', DEFAULT_INCIDENT_RECIPIENT)
+            addressing = {'external_recipient': target}
+            subject_str = f'[НЕТ ПРИВЯЗКИ] {subject_str}'
+            email_body = _incident_body(app_obj, responsible, reason, email_body)
+            success_status = 'Redirected'
+            logger.warning(
+                f'Заявка #{application_id}: {reason}; письмо перенаправлено на {target}'
+            )
 
         log_entry.recipient = target
         log_entry.subject = subject_str
@@ -128,7 +181,7 @@ def generate_and_send_email(application_id):
                 **addressing
             )
             
-            log_entry.status = 'Success'
+            log_entry.status = success_status
             log_entry.server_response = f"Notification ID: {result.get('id', 'N/A')}"
             logger.info(f"Email для заявки #{application_id} успешно отправлен на {target}")
             
