@@ -29,8 +29,7 @@ class NotificationServiceClient:
     
     @staticmethod
     def _recipient_fields(login: Optional[str] = None,
-                          external_recipient: Optional[str] = None,
-                          recipient: Optional[str] = None) -> dict:
+                          external_recipient: Optional[str] = None) -> dict:
         """
         Собрать поля адресации для notification-service.
 
@@ -40,24 +39,17 @@ class NotificationServiceClient:
         Raises:
             ValueError: если заполнено не одно поле
         """
-        if sum(1 for v in (login, external_recipient, recipient) if v) != 1:
+        if sum(1 for v in (login, external_recipient) if v) != 1:
             raise ValueError(
-                "Нужно ровно одно поле получателя: login, external_recipient или recipient"
+                "Нужно ровно одно поле получателя: login или external_recipient"
             )
         if login:
             return {"login": login}
-        if external_recipient:
-            return {"external_recipient": external_recipient}
-        logger.warning(
-            "Уведомление отправлено через устаревшее поле recipient=%s — "
-            "переведите вызов на login или external_recipient", recipient
-        )
-        return {"recipient": recipient}
+        return {"external_recipient": external_recipient}
 
     def send_email(self, subject: str, content: str,
                    login: Optional[str] = None,
                    external_recipient: Optional[str] = None,
-                   recipient: Optional[str] = None,
                    attachment_filename: Optional[str] = None,
                    attachment_content: Optional[bytes] = None) -> dict:
         """
@@ -68,7 +60,6 @@ class NotificationServiceClient:
             content: Текст письма
             login: Логин получателя на портале (предпочтительно)
             external_recipient: Email получателя вне портала
-            recipient: УСТАРЕЛО — сырой email; оставлено для совместимости
             attachment_filename: Имя файла вложения (опционально)
             attachment_content: Содержимое файла в байтах (опционально)
             
@@ -82,8 +73,8 @@ class NotificationServiceClient:
         try:
             # Формируем тело письма
             email_body = content
-            addressing = self._recipient_fields(login, external_recipient, recipient)
-            target = login or external_recipient or recipient
+            addressing = self._recipient_fields(login, external_recipient)
+            target = login or external_recipient
             
             # Формируем запрос
             payload = {
