@@ -1,7 +1,7 @@
 # data_sync.py
 import sys
 import time
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import create_engine, inspect, literal_column
 from app.extensions import db
 from app.models import EstateSells, EstateDeals, EstateDealsContacts, EstateHouses
 from config import Config
@@ -16,6 +16,24 @@ sys.stderr.reconfigure(encoding='utf-8')
 # Это количество записей, которое будет загружаться в память за один раз.
 # 1000 - это хороший баланс между скоростью и использованием памяти.
 CHUNK_SIZE = 100000
+
+# Часть договоров в MacroCRM оформлена как предварительные: agreement_number/agreement_date
+# пустые, а номер и дата лежат в preliminary_number/preliminary_date. Локально такие сделки
+# не различаются — при синхронизации подставляем предварительный номер в agreement_number,
+# иначе договор не проходит фильтр "agreement_number != ''" и клиент не виден в листинге.
+# Непустой agreement_number берётся как есть (без TRIM), чтобы не разъехаться с уже
+# созданными заявками, которые хранят номер строкой.
+_AGREEMENT_BLANK = "NULLIF(TRIM(estate_deals.agreement_number), '') IS NULL"
+DEAL_NUMBER_SQL = (
+    f"CASE WHEN {_AGREEMENT_BLANK} "
+    "THEN COALESCE(estate_deals.preliminary_number, '') "
+    "ELSE estate_deals.agreement_number END"
+)
+DEAL_DATE_SQL = (
+    f"CASE WHEN {_AGREEMENT_BLANK} "
+    "THEN estate_deals.preliminary_date "
+    "ELSE estate_deals.agreement_date END"
+)
 
 
 def sync_data():
@@ -227,10 +245,14 @@ def sync_data():
                     # _sell_match/_contact_match ниже используются только чтобы отличить
                     # "битую" ссылку на несуществующую в источнике запись (её обнуляем,
                     # иначе упадёт FOREIGN KEY локальной БД) от изначально пустой.
+                    # agreement_number/agreement_date подменяются на предварительные,
+                    # если основные пустые — см. DEAL_NUMBER_SQL/DEAL_DATE_SQL.
                     chunk_query = (
                         db.select(
                             model.id, model.estate_sell_id, model.deal_status_name,
-                            model.agreement_number, model.agreement_date, model.deal_sum,
+                            literal_column(DEAL_NUMBER_SQL).label('agreement_number'),
+                            literal_column(DEAL_DATE_SQL).label('agreement_date'),
+                            model.deal_sum,
                             model.deal_area, model.contacts_buy_id, model.finances_income_reserved,
                             EstateSells.estate_sell_id.label('_sell_match'),
                             EstateDealsContacts.id.label('_contact_match'),
@@ -288,7 +310,7 @@ def sync_data():
                     # Но на всякий случай фильтруем
                     original_count = len(chunk)
                     chunk = [record for record in chunk
-                            if not (record.get('agreement_number', '').startswith('NC-') or
+                            if not ((record.get('agreement_number') or '').startswith('NC-') or
                                    record.get('agreement_number') == 'SYSTEM-001')]
                     filtered_count = original_count - len(chunk)
                     if filtered_count > 0:
